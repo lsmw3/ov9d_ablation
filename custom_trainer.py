@@ -19,6 +19,8 @@ class CustomTrainer(L.LightningModule):
         self.nocs_loss = logging.AverageMeter()
         self.criterion = SmoothL1Loss(beta=0.1)
 
+        self.total_val_steps = 0
+
     
     def _step(self, batch, prex, batch_idx):
         input_RGB = batch['image']
@@ -77,7 +79,37 @@ class CustomTrainer(L.LightningModule):
 
         self.log(f'{prex}/loss', loss_o, on_step=True, on_epoch=True, prog_bar=True)
 
+        if prex == "train":
+            if 0 == self.trainer.global_step % 10 and (self.trainer.local_rank == 0):
+                output_vis = self.vis_images(preds, batch)
+                for key, value in output_vis.items():
+                    imgs = [np.concatenate([img for img in value],axis=0)]
+                    self.logger.log_image(f'{prex}/{key}', imgs, step=self.global_step)
+        else:
+            if 0 == self.total_val_steps % 10:
+                output_vis = self.vis_images(preds, batch)
+                for key, value in output_vis.items():
+                    imgs = [np.concatenate([img for img in value],axis=0)]
+                    self.logger.log_image(f'{prex}/{key}', imgs, step=self.global_step)
+
+            self.total_val_steps += 1
+
+        torch.cuda.empty_cache()
+
         return loss_o
+    
+
+    def vis_images(self, output, batch):
+        outputs = {}
+        B, C, H, W = batch['image'].shape
+
+        gt_rgb = batch['image'].permute(0, 2, 3, 1).detach().cpu().numpy()
+        gt_nocs = batch['nocs'].permute(0, 2, 3, 1).detach().cpu().numpy()
+        pred_nocs = output['pred_nocs'].permute(0, 2, 3, 1).detach().cpu().numpy()
+
+        outputs.update({f"gt rgb":gt_rgb, f"gt nocs":gt_nocs, f"pred nocs":pred_nocs})
+
+        return outputs
 
     
     def training_step(self, batch, batch_idx):
