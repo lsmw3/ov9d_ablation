@@ -1,0 +1,70 @@
+{
+  "os":  "Linux-6.11.0-1013-oem-x86_64-with-glibc2.17",
+  "python":  "CPython 3.8.20",
+  "startedAt":  "2025-02-23T20:23:27.203951Z",
+  "args":  [
+    "--batch_size",
+    "16",
+    "--dataset",
+    "oo3d9dsingle",
+    "--data_path",
+    "/home/q672126/project/ov9d/ov9d",
+    "--data_name",
+    "oo3d9dsingle",
+    "--data_train",
+    "train",
+    "--data_val",
+    "test/all",
+    "--num_filters",
+    "32",
+    "32",
+    "32",
+    "--deconv_kernels",
+    "2",
+    "2",
+    "2",
+    "--layer_decay",
+    "0.9",
+    "--log_dir",
+    "logs",
+    "--scale_size",
+    "480",
+    "--epochs",
+    "25",
+    "--auto_resume",
+    "--dino"
+  ],
+  "program":  "train_wo_sd.py",
+  "codePath":  "train_wo_sd.py",
+  "email":  "zhaowei.lu@tum.de",
+  "root":  "/home/q672126/project/ov9d_custom",
+  "host":  "clid2078748",
+  "executable":  "/home/q672126/anaconda3/envs/ov9d_ablation/bin/python",
+  "codePathLocal":  "train_wo_sd.py",
+  "cpu_count":  20,
+  "cpu_count_logical":  28,
+  "gpu":  "NVIDIA RTX 3500 Ada Generation Laptop GPU",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "1002465648640",
+      "used":  "671050457088"
+    }
+  },
+  "memory":  {
+    "total":  "33306030080"
+  },
+  "cpu":  {
+    "count":  20,
+    "countLogical":  28
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA RTX 3500 Ada Generation Laptop GPU",
+      "memoryTotal":  "12878610432",
+      "cudaCores":  5120,
+      "architecture":  "Ada"
+    }
+  ],
+  "cudaVersion":  "12.4"
+}

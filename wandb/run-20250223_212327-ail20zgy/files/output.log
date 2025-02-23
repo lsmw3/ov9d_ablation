@@ -1,0 +1,41 @@
+Using PyTorch 2.0.0 and Lightning 1.9.5
+Namespace(auto_resume=True, batch_size=16, data_name='oo3d9dsingle', data_path='/home/q672126/project/ov9d/ov9d', data_train='train', data_val='test/all', dataset='oo3d9dsingle', deconv_kernels=[2, 2, 2], dino=True, epochs=25, exp_name='', gpu_or_cpu='gpu', layer_decay=0.9, log_dir='logs', max_lr=0.0001, min_lr=0.0001, num_deconv=3, num_filters=[32, 32, 32], print_freq=10, pro_bar=False, resume_from=None, save_freq=1, save_model=False, save_result=False, scale_size=480, use_checkpoint=False, val_freq=1, weight_decay=0.05, workers=8)
+<class 'dataset.oo3d9dsingle.oo3d9dsingle'>
+Dataset: OmniObject3D Render
+# of train images: 225213
+<class 'dataset.oo3d9dsingle.oo3d9dsingle'>
+Dataset: OmniObject3D Render
+# of test images: 11450
+/home/q672126/anaconda3/envs/ov9d_ablation/lib/python3.8/site-packages/pytorch_lightning/loggers/wandb.py:395: UserWarning: There is a wandb run already in progress and newly created instances of `WandbLogger` will reuse this run. If this is not desired, call `wandb.finish()` before instantiating `WandbLogger`.
+  rank_zero_warn(
+Using cache found in /home/q672126/.cache/torch/hub/facebookresearch_dinov2_main
+/home/q672126/.cache/torch/hub/facebookresearch_dinov2_main/dinov2/layers/swiglu_ffn.py:51: UserWarning: xFormers is not available (SwiGLU)
+  warnings.warn("xFormers is not available (SwiGLU)")
+/home/q672126/.cache/torch/hub/facebookresearch_dinov2_main/dinov2/layers/attention.py:33: UserWarning: xFormers is not available (Attention)
+  warnings.warn("xFormers is not available (Attention)")
+/home/q672126/.cache/torch/hub/facebookresearch_dinov2_main/dinov2/layers/block.py:40: UserWarning: xFormers is not available (Block)
+  warnings.warn("xFormers is not available (Block)")
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+IPU available: False, using: 0 IPUs
+HPU available: False, using: 0 HPUs
+`Trainer(limit_train_batches=1.0)` was configured so 100% of the batches per epoch will be used..
+`Trainer(limit_val_batches=1.0)` was configured so 100% of the batches will be used..
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+
+  | Name      | Type         | Params
+-------------------------------------------
+0 | model     | OV9D         | 305 M
+1 | criterion | SmoothL1Loss | 0
+-------------------------------------------
+1.5 M     Trainable params
+304 M     Non-trainable params
+305 M     Total params
+1,223.608 Total estimated model params size (MB)
+Epoch 0:   0%|                                                                   | 6/25525 [00:16<19:22:35,  2.73s/it, loss=0.372, v_num=0zgy, train/loss_step=0.266]
+/home/q672126/anaconda3/envs/ov9d_ablation/lib/python3.8/site-packages/pytorch_lightning/trainer/connectors/data_connector.py:224: PossibleUserWarning: The dataloader, val_dataloader 0, does not have many workers which may be a bottleneck. Consider increasing the value of the `num_workers` argument` (try 28 which is the number of cpus on this machine) in the `DataLoader` init to improve performance.
+  rank_zero_warn(
+/home/q672126/anaconda3/envs/ov9d_ablation/lib/python3.8/site-packages/pytorch_lightning/utilities/data.py:83: UserWarning: Trying to infer the `batch_size` from an ambiguous collection. The batch size we found is 1. To avoid any miscalculations, use `self.log(..., batch_size=batch_size)`.
+  warning_cache.warn(
+/home/q672126/anaconda3/envs/ov9d_ablation/lib/python3.8/site-packages/pytorch_lightning/utilities/data.py:83: UserWarning: Trying to infer the `batch_size` from an ambiguous collection. The batch size we found is 16. To avoid any miscalculations, use `self.log(..., batch_size=batch_size)`.
+  warning_cache.warn(
