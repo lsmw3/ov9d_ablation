@@ -1,7 +1,0 @@
-{"time":"2025-02-23T21:23:27.204999301+01:00","level":"INFO","msg":"stream: starting","core version":"0.19.7","symlink path":"/home/q672126/project/ov9d_custom/wandb/run-20250223_212327-ail20zgy/logs/debug-core.log"}
-{"time":"2025-02-23T21:23:27.310183533+01:00","level":"INFO","msg":"created new stream","id":"ail20zgy"}
-{"time":"2025-02-23T21:23:27.310210049+01:00","level":"INFO","msg":"stream: started","id":"ail20zgy"}
-{"time":"2025-02-23T21:23:27.310264865+01:00","level":"INFO","msg":"writer: Do: started","stream_id":"ail20zgy"}
-{"time":"2025-02-23T21:23:27.310372035+01:00","level":"INFO","msg":"sender: started","stream_id":"ail20zgy"}
-{"time":"2025-02-23T21:23:27.310388883+01:00","level":"INFO","msg":"handler: started","stream_id":"ail20zgy"}
-{"time":"2025-02-23T21:23:27.704338435+01:00","level":"INFO","msg":"Starting system monitor"}
