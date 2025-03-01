@@ -80,13 +80,13 @@ class CustomTrainer(L.LightningModule):
         self.log(f'{prex}/loss', loss_o, on_step=True, on_epoch=True, prog_bar=True)
 
         if prex == "train":
-            if 0 == self.trainer.global_step % 10 and (self.trainer.local_rank == 0):
+            if 0 == self.trainer.global_step % 200 and (self.trainer.local_rank == 0):
                 output_vis = self.vis_images(preds, batch)
                 for key, value in output_vis.items():
                     imgs = [np.concatenate([img for img in value],axis=0)]
                     self.logger.log_image(f'{prex}/{key}', imgs, step=self.global_step)
         else:
-            if 0 == self.total_val_steps % 10:
+            if 0 == self.total_val_steps % 100:
                 output_vis = self.vis_images(preds, batch)
                 for key, value in output_vis.items():
                     imgs = [np.concatenate([img for img in value],axis=0)]

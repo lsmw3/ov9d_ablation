@@ -53,7 +53,7 @@ def main():
                               pin_memory=True,
                               drop_last=True)
     val_loader = DataLoader(val_dataset,
-                            batch_size=1,
+                            batch_size=12,
                             sampler=sampler_val,
                             pin_memory=True)
     
@@ -64,9 +64,9 @@ def main():
     logger = WandbLogger(name=exp_name,project=project_name, save_dir="./wandb", entity="large-reconstruction-model")
 
     # device = torch.device(args.gpu)
-    nproc_per_node = int(os.getenv('NPROC_PER_NODE', '1'))
-    world_size = int(os.getenv('WORLD_SIZE', '1'))
-    strategy = DDPStrategy(find_unused_parameters=True) if world_size > 1 else None
+    # nproc_per_node = int(os.getenv('NPROC_PER_NODE', '1'))
+    # world_size = int(os.getenv('WORLD_SIZE', '1'))
+    # strategy = DDPStrategy(find_unused_parameters=True) if world_size > 1 else None
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=os.path.join(args.log_dir, "ov9d_ablation"),
@@ -74,18 +74,18 @@ def main():
         monitor='val/loss',
         # save_last=True,
         save_top_k=3,             # Set to -1 to save all checkpoints
-        every_n_epochs=50,
+        every_n_epochs=10,
         save_on_train_epoch_end=True
     )
 
     my_trainer = CustomTrainer(args)
 
-    trainer = L.Trainer(devices=nproc_per_node,
+    trainer = L.Trainer(devices=[0],
                         num_nodes=1,
                         max_epochs=args.epochs,
                         # max_epochs=1,
                         accelerator='gpu',
-                        strategy=strategy,
+                        # strategy=strategy,
                         accumulate_grad_batches=1,
                         logger=logger,
                         gradient_clip_val=0.5,
@@ -101,6 +101,7 @@ def main():
         my_trainer, 
         train_dataloaders=train_loader,
         val_dataloaders=val_loader,
+        ckpt_path='/workspace/di38wiq/projects/Anything6D/ov9d_ablation/logs/ov9d_ablation/epoch_epoch=9.ckpt'
         )
     
     dt = datetime.now() - t0

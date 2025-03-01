@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import shutil
 
 os.chdir('ov9d')
 
@@ -9,18 +10,19 @@ test_dir = Path('test')
 test_dir.mkdir(parents=True, exist_ok=True)
 single = Path('oo3d9dsingle')
 
-test_cats = ['bowl', 'bumbag', 'dumpling', 'facial_cream', 'handbag', 
-             'litchi', 'mouse', 'pineapple', 'teddy_bear', 'toy_truck']
+test_cats = ['bowl', 'box', 'carrot', 'doll', 'gloves', 
+             'kite', 'package', 'pear']
 
 [(test_dir/cat).mkdir(parents=True, exist_ok=True) for cat in test_cats]
 (test_dir/'all').mkdir(parents=True, exist_ok=True)
 
-
 for folder in os.listdir(single):
     print(folder)
     cat = '_'.join(folder.split('_')[:-2])
+    src_path = (single / folder).resolve()
+
     if cat in test_cats:
-        os.symlink((single/folder).resolve(), (test_dir/cat/folder).resolve())
-        os.symlink((single/folder).resolve(), (test_dir/'all'/folder).resolve())
+        shutil.move(str(src_path), str((test_dir/cat/folder).resolve()))
+        shutil.move(str((test_dir/cat/folder).resolve()), str((test_dir/'all'/folder).resolve()))
     else:
-        os.symlink((single/folder).resolve(), (train_dir/folder).resolve())
+        shutil.move(str(src_path), str((train_dir/folder).resolve()))

@@ -1,1 +1,4 @@
 wandb/
+ov9d/
+logs/
+**/__pycache__/

@@ -26,8 +26,8 @@ class OV9D(nn.Module):
             )
 
         if args.dino:
-            self.decoder = Decoder(channels_in+1024, channels_out, args)
-            self.dino = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14')
+            self.decoder = Decoder(channels_in+384, channels_out, args)
+            self.dino = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')
             for p in self.dino.parameters():
                 p.requires_grad = False
             self.register_buffer("pixel_mean", torch.tensor((0.485, 0.456, 0.406)).view(1, 3, 1, 1), False)
@@ -63,7 +63,7 @@ class OV9D(nn.Module):
                 grid_h, grid_w = torch.meshgrid(range_h, range_w, indexing='ij')
                 grid = torch.stack([grid_w, grid_h], dim=-1)
                 grid = torch.stack([grid]*b, dim=0).to(x.device)
-                dino_feature = torch.nn.functional.grid_sample(dino_feature, grid, align_corners=True) # (b, 1024, 15, 15)
+                dino_feature = torch.nn.functional.grid_sample(dino_feature, grid, align_corners=True) # (b, 384, 15, 15)
         x = x*2.0 - 1.0  # normalize to [-1, 1]
 
         class_embeddings = self.class_embeddings[class_ids.tolist()] if class_ids is not None else self.class_embeddings
@@ -71,7 +71,7 @@ class OV9D(nn.Module):
         conv_feats = conv_feats.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, dino_feature.shape[-2], dino_feature.shape[-1]) # (B, 768, 15, 15)   
 
         if self.dino:
-            conv_feats = torch.cat([conv_feats, dino_feature], dim=1) # (B, 1024+768, 15, 15)
+            conv_feats = torch.cat([conv_feats, dino_feature], dim=1) # (B, 384+768, 15, 15)
         
         out = self.decoder([conv_feats])
         out_nocs = self.last_layer_nocs(out) # (B, 3, 480, 480)
