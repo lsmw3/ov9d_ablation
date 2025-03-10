@@ -33,7 +33,8 @@ def main():
         'dataset_name': args.dataset, 
         'data_path': args.data_path, 
         'data_name': args.data_name, 
-        'data_type': args.data_train, 
+        'data_type': args.data_train,
+        'feat_3d_path': args.data_3d_feat 
     }
     dataset_kwargs['scale_size'] = args.scale_size
 
@@ -101,7 +102,7 @@ def main():
         my_trainer, 
         train_dataloaders=train_loader,
         val_dataloaders=val_loader,
-        ckpt_path='/workspace/di38wiq/projects/Anything6D/ov9d_ablation/logs/ov9d_ablation/epoch_epoch=9.ckpt'
+        # ckpt_path='/path/to/checkpoint'
         )
     
     dt = datetime.now() - t0

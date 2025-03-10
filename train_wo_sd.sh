@@ -5,8 +5,8 @@
 
 mkdir -p logs
 
-# torchrun --nproc_per_node=$NPROC_PER_NODE --nnodes=$WORLD_SIZE --node_rank=$RANK \
-python   train_wo_sd.py --batch_size 32 --dataset oo3d9dsingle --data_path ov9d --data_name oo3d9dsingle --data_train train --data_val test/all \
+torchrun --nproc_per_node=$NPROC_PER_NODE --nnodes=$WORLD_SIZE --node_rank=$RANK \
+         train_wo_sd.py --batch_size 2 --dataset oo3d9dmulti --data_path /home/q672126/project/ov9d/ov9d --data_name oo3d9dmulti --data_train train_multi --data_val test_multi --data_3d_feat ov9d_dataset_test_3d_feature\
          --num_filters 32 32 32 --deconv_kernels 2 2 2\
-         --layer_decay 0.9 --log_dir logs \
-         --scale_size 480 --epochs 50 --auto_resume --dino 
+         --lr 1e-4 --log_dir logs \
+         --scale_size 480 --epochs 25 --auto_resume --dino --dino_type large --attn_depth 4 --rot_dim 6

@@ -20,11 +20,11 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--data_name', type=str, default='ycbv')
         parser.add_argument('--data_train', type=str, default='train')
         parser.add_argument('--data_val', type=str, default='val')
+        parser.add_argument('--data_3d_feat', type=str, default=None)
 
         # experiment configs
         parser.add_argument('--epochs',      type=int,   default=25)
-        parser.add_argument('--max_lr',          type=float, default=1e-4)
-        parser.add_argument('--min_lr',          type=float, default=1e-4)
+        parser.add_argument('--lr',          type=float, default=1e-4)
         parser.add_argument('--weight_decay',          type=float, default=5e-2)
         parser.add_argument('--layer_decay',          type=float, default=0.9)
         

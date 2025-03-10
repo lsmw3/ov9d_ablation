@@ -32,5 +32,9 @@ class BaseOptions():
         parser.add_argument('--deconv_kernels', nargs='+', type=int)
 
         parser.add_argument('--dino', action='store_true') 
+        parser.add_argument('--dino_type', type=str, default=None)
+        parser.add_argument('--attn_depth', type=int, default=4)
+
+        parser.add_argument('--rot_dim', type=int, default=6)
         
         return parser

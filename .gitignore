@@ -1,4 +1,14 @@
 wandb/
-ov9d/
 logs/
-**/__pycache__/
+ov9d_ablation/
+ov9d_dataset_test_3d_feature/
+image_samples/
+temp.py
+image.jpg
+bbox.jpg
+warped_image.jpg
+warped_image_self.jpg
+mask.jpg
+warped_mask.jpg
+vis_image.jpg
+point_cloud.pcd

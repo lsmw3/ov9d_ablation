@@ -1,6 +1,5 @@
 import os
 import cv2
-import open3d as o3d
 import json
 import numpy as np
 from scipy.stats import truncnorm
@@ -9,7 +8,7 @@ from dataset.base_dataset import BaseDataset
 from utils.utils import get_2d_coord_np, crop_resize_by_warp_affine
 
 
-class oo3d9dsingle(BaseDataset):
+class oo3d9dmulti(BaseDataset):
     def __init__(self, data_path, data_name, data_type, feat_3d_path,
                  is_train=True, scale_size=480, num_view=50):
         super().__init__()
@@ -23,7 +22,9 @@ class oo3d9dsingle(BaseDataset):
             self.models_info = json.load(f)
         with open(os.path.join(data_path, 'class_list.json'), 'r') as f:
             class_list = json.load(f)
-            self.class_dict = {k: v for k, v in zip(class_list, range(len(class_list)))}
+            self.class_dict = {k+1: v for k, v in zip(range(len(class_list)), class_list)}
+        with open(os.path.join(data_path, 'oid2cid.json'), 'r') as f:
+            oid_2_cid = json.load(f)
         for scene_id in os.listdir(self.data_path):
             with open(os.path.join(self.data_path, scene_id, 'scene_camera.json'), 'r') as f:
                 scene_camera = json.load(f)
@@ -31,8 +32,6 @@ class oo3d9dsingle(BaseDataset):
                 scene_gt = json.load(f)
             with open(os.path.join(self.data_path, scene_id, 'scene_gt_info.json'), 'r') as f:
                 scene_gt_info = json.load(f)
-            with open(os.path.join(self.data_path, scene_id, 'scene_meta.json'), 'r') as f:
-                scene_meta = json.load(f)
 
             # feat_3d_points = np.load(os.path.join(feat_3d_path, scene_id, "3d_feat.npy"))
 
@@ -43,19 +42,23 @@ class oo3d9dsingle(BaseDataset):
             for view_id in view_ids:
                 if i >= curr_num_view:
                     break
-                if scene_gt_info[view_id][0]['bbox_visib'][2] < 50 or scene_gt_info[view_id][0]['bbox_visib'][3] < 50:
-                    continue
-                self.data_list.append(
-                    {
-                        'scene': scene_id,
-                        'view': f'{int(view_id):{0}{6}}',
-                        'cam': scene_camera[view_id],
-                        'gt': scene_gt[view_id],
-                        'gt_info': scene_gt_info[view_id],
-                        'meta': scene_meta[view_id], 
-                        # '3d_feat': feat_3d_points # (1024, 387)
-                    }
-                )
+                objects_ids_in_scene = np.arange(len(scene_gt_info[view_id]))
+                for obj_id in objects_ids_in_scene:
+                    if scene_gt_info[view_id][obj_id]['bbox_visib'][2] < 50 or scene_gt_info[view_id][0]['bbox_visib'][3] < 50:
+                        continue
+                    self.data_list.append(
+                        {
+                            'scene': scene_id,
+                            'view': f'{int(view_id):{0}{6}}',
+                            'object_in_scene': f'{int(obj_id):{0}{6}}',
+                            'cam': scene_camera[view_id],
+                            'gt': scene_gt[view_id][obj_id],
+                            'gt_info': scene_gt_info[view_id][obj_id],
+                            'meta': self.models_info[str(scene_gt[view_id][obj_id]["obj_id"])],
+                            'class_id': oid_2_cid[str(scene_gt[view_id][obj_id]["obj_id"])]
+                            # '3d_feat': feat_3d_points # (1024, 387)
+                        }
+                    )
                 i += 1
         
         phase = 'train' if is_train else 'test'
@@ -68,52 +71,56 @@ class oo3d9dsingle(BaseDataset):
     def __getitem__(self, idx):
         info = self.data_list[idx]
         # scene, view, cam, gt, gt_info, meta, feat_3d = info['scene'], info['view'], info['cam'], info['gt'], info['gt_info'], info['meta'], info['3d_feat']
-        scene, view, cam, gt, gt_info, meta = info['scene'], info['view'], info['cam'], info['gt'], info['gt_info'], info['meta']
-        num_obj = len(gt)
-        # randomly select a sample
-        visib_fract = [gt_info[i]['visib_fract'] for i in range(num_obj)]
-        dist = (np.asarray(visib_fract) > 0.2).astype(float)
-        if np.sum(dist) == 0:
-            print(f'scene: {scene} | view: {view}')
-            dist = (np.asarray(visib_fract) > 0).astype(float)
-        dist /= dist.sum()
-        sample_id = np.random.choice(np.arange(num_obj), p=dist)
+        scene, view, obj_in_scene, cam, gt, gt_info, meta, class_id = info['scene'], info['view'], info['object_in_scene'], info['cam'], info['gt'], info['gt_info'], info['meta'], info['class_id']
+
         cam_K = np.asarray(cam['cam_K']).reshape(3, 3)
-        cam_R_m2c, cam_t_m2c, obj_id = gt[sample_id]['cam_R_m2c'], gt[sample_id]['cam_t_m2c'], gt[sample_id]['obj_id']
+        cam_R_m2c, cam_t_m2c, obj_id = gt['cam_R_m2c'], gt['cam_t_m2c'], gt['obj_id']
         cam_R_m2c = np.asarray(cam_R_m2c).reshape(3, 3)
         cam_t_m2c = np.asarray(cam_t_m2c).reshape(1, 1, 3)
-        kps3d = self.get_keypoints(meta[sample_id])
+        kps3d = self.get_keypoints(meta) # key points in 3d model frame
         diag = np.linalg.norm(kps3d[0, 1] - kps3d[0, 8])
-        kp_i = (kps3d @ cam_R_m2c.T + cam_t_m2c) @ cam_K.T  # n * 9 * 3
-        kp_i = kp_i[..., 0:2] / kp_i[..., 2:]  # n * 9 * 2
+        kp_i = (kps3d @ cam_R_m2c.T + cam_t_m2c) @ cam_K.T # n * 9 * 3, key points on 2d pixel plane
+        obj_z_gt = kp_i[0, 0, 2] # depth of model centroid in camera frame
+        kp_i = kp_i[..., 0:2] / kp_i[..., 2:] # n * 9 * 2, homogeneous 2d key points coordinates
+        obj_centroid_2d = kp_i[0, 0, :2]
 
-        bbox = gt_info[sample_id]['bbox_visib']
+        bbox = gt_info['bbox_visib']
 
         rgb_path = os.path.join(self.data_path, scene, 'rgb', view+'.png')
         if not os.path.exists(rgb_path):
             rgb_path = os.path.join(self.data_path, scene, 'rgb', view+'.jpg')
         depth_path = os.path.join(self.data_path, scene, 'depth', view+'.png')
-        mask_path = os.path.join(self.data_path, scene, 'mask_visib', '_'.join([view, f'{sample_id:{0}{6}}'])+'.png')
+        mask_path = os.path.join(self.data_path, scene, 'mask_visib', '_'.join([view, obj_in_scene])+'.png')
 
         image = cv2.imread(rgb_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        raw_image = image.copy()
         depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
         pcl_c = self.K_dpt2cld(depth, 1/cam['depth_scale'], cam_K) # points in camera frame
         pcl_m = (pcl_c - cam_t_m2c).dot(cam_R_m2c) # points in model frame
         mask = cv2.imread(mask_path)
-        image[mask != 255] = 70  # remove background
+
+        # vis_img = draw_3d_bbox_with_coordinate_frame(image, kps3d[0], cam_R_m2c, cam_t_m2c.reshape(-1), cam_K)
+
+        image[mask != 255] = 70 # remove background
 
         if self.is_train:
             c, s = self.xywh2cs_dzi(bbox, wh_max=self.scale_size)
         else:
             c, s = self.xywh2cs(bbox, wh_max=self.scale_size)
+
+        # relative translation offset from the bbox centeroid to object centroid on 2d pixel plane
+        delta_c = obj_centroid_2d - c
+        trans_ratio = np.asarray([delta_c[0] / s, delta_c[1] / s, obj_z_gt / (self.scale_size / s)]).astype(np.float32)
+        
         interpolate = cv2.INTER_NEAREST
         # interpolate = cv2.INTER_LINEAR
-        rgb, c_h_, c_w_, s_, roi_coord_2d = self.zoom_in_v2(image, c, s, res=self.scale_size, return_roi_coord=True) # center cropped rgb
-        pcl_m, *_ = self.zoom_in_v2(pcl_m, c, s, res=self.scale_size, interpolate=interpolate) # center cropped point cloud in model frame, (480, 480, 3)
-        mask, *_ = self.zoom_in_v2(mask, c, s, res=self.scale_size, interpolate=interpolate) # center cropped mask
+        rgb, c_h_, c_w_, s_, roi_coord_2d = self.zoom_in_v2(image, c, s, res=self.scale_size, return_roi_coord=True) # center-cropped rgb
+        pcl_m, *_ = self.zoom_in_v2(pcl_m.astype(np.float32), c, s, res=self.scale_size, interpolate=interpolate) # center-cropped point cloud in model frame, (480, 480, 3)
+        mask, *_ = self.zoom_in_v2(mask, c, s, res=self.scale_size, interpolate=interpolate) # center-cropped mask
         mask = mask[..., 0] == 255
-        center = (kps3d[0, 1] + kps3d[0, 8]) / 2
+        rgb[mask[:, :, None] != [True, True, True]] = 70 # further align the background, especially in case the cropped rgb is outside the boundary of raw image
+        center = (kps3d[0, 1] + kps3d[0, 8]) / 2 # seems this is the true center of the objects in 3d model frame (actually same as kps3d[0, 0])
         nocs = (pcl_m - center.reshape(1, 1, 3)) / diag + 0.5
         nocs[np.logical_not(mask)] = 0
         mask[np.sum(np.logical_or(nocs > 1, nocs < 0), axis=-1) != 0] = False
@@ -136,38 +143,44 @@ class oo3d9dsingle(BaseDataset):
             rgb = self.augment_training_data(rgb.astype(np.uint8))
 
         out_dict = {
-            'image': (rgb.transpose((2, 0, 1)) / 255).astype(np.float32),
-            'roi_coord_2d': roi_coord_2d.astype(np.float32),
+            'raw_scene': raw_image.transpose((2, 0, 1)), # (3, H, W), dtype = np.uint8
+            'image': (rgb.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 480, 480)
+            'bbox_size': s,
+            'bbox_center': c,
+            'roi_coord_2d': roi_coord_2d.astype(np.float32), # (2, 480, 480)
             'gt_r': cam_R_m2c.astype(np.float32),
-            'gt_t': cam_t_m2c.reshape(3).astype(np.float32),
+            'gt_t': cam_t_m2c.reshape(-1).astype(np.float32),
+            'cam': cam_K.astype(np.float32),
             'resize_ratio': np.array([self.scale_size / s], dtype=np.float32),
-            'mask': mask,
-            'nocs': nocs.transpose((2, 0, 1)).astype(np.float32), 
-            'kps': kp_i.astype(np.float32),
+            'gt_trans_ratio': trans_ratio.reshape(-1).astype(np.float32),
+            'mask': mask, # (480, 480)
+            'nocs': nocs.transpose((2, 0, 1)).astype(np.float32), # (3, 480, 480)
+            # 'kps': kp_i.astype(np.float32),
+            'kps_3d_m': kps3d[0].astype(np.float32), # (9, 3)
             'dis_sym': dis_sym.astype(np.float32),
             'con_sym': con_sym.astype(np.float32),
             'filename': '-'.join([scene, view]),
-            'class_id': self.class_dict['_'.join(scene.split('_')[0:-2])],
+            'class_id': class_id,
             'obj_id': obj_id,
             'pcl_model': pcl_m.astype(np.float32), # (480, 480, 3)
             # '3d_feat': feat_3d.astype(np.float32) # (1024, 387)
         }
 
-        if not self.is_train:
-            kps3d = kps3d - center.reshape(1, 1, 3)
-            pcl_c, *_ = self.zoom_in_v2(pcl_c, c, s, res=self.scale_size, interpolate=interpolate)
-            extra_gt = {
-                'dis_image': (rgb.transpose((2, 0, 1)) / 255).astype(np.float32),
-                "kps3d": kps3d,
-                "cam_K": cam_K,
-                "cam_R_m2c": cam_R_m2c,
-                "cam_t_m2c": cam_t_m2c,
-                "c": c,
-                "s": s,
-                "diag": diag, 
-                "pcl_c": pcl_c.astype(np.float32), 
-            }
-            out_dict.update(extra_gt)
+        # if not self.is_train:
+        #     kps3d = kps3d - center.reshape(1, 1, 3)
+        #     pcl_c, *_ = self.zoom_in_v2(pcl_c, c, s, res=self.scale_size, interpolate=interpolate)
+        #     extra_gt = {
+        #         'dis_image': (rgb.transpose((2, 0, 1)) / 255).astype(np.float32),
+        #         "kps3d": kps3d,
+        #         "cam_K": cam_K,
+        #         "cam_R_m2c": cam_R_m2c,
+        #         "cam_t_m2c": cam_t_m2c,
+        #         "c": c,
+        #         "s": s,
+        #         "diag": diag, 
+        #         "pcl_c": pcl_c.astype(np.float32), 
+        #     }
+        #     out_dict.update(extra_gt)
 
         return out_dict
 
@@ -177,8 +190,8 @@ class oo3d9dsingle(BaseDataset):
         sizes = [model_info['size_x'], model_info['size_y'], model_info['size_z']]
         maxs = [mins[i]+sizes[i] for i in range(len(mins))]
         base = [c.reshape(-1) for c in np.meshgrid(*zip(mins, maxs), indexing='ij')]
-        base = np.stack(base, axis=-1)
-        centroid = np.mean(base, axis=0, keepdims=True)
+        base = np.stack(base, axis=-1) # 8 corners of the 3d bounding box of the object
+        centroid = np.mean(base, axis=0, keepdims=True) # center of the 3d bounding box
         base = np.concatenate([centroid, base], axis=0)
         keypoints = [base]
         if 'symmetries_discrete' in model_info:
@@ -298,29 +311,15 @@ class oo3d9dsingle(BaseDataset):
         ndim = im.ndim
         if ndim == 2:
             im = im[..., np.newaxis]
-        try:
-            im_crop = np.zeros((s, s, im.shape[-1]))
-        except:
-            print(s)
-            s = 480
-            im_crop = np.zeros((s, s, im.shape[-1]))
+
         max_h, max_w = im.shape[0:2]
-        crop_min_h, crop_min_w = max(0, c_h - s // 2), max(0, c_w - s // 2)
-        crop_max_h, crop_max_w = min(max_h, c_h + s // 2), min(max_w, c_w + s // 2)
-        up = s // 2 - (c_h - crop_min_h)
-        down = s // 2 + (crop_max_h-c_h)
-        left = s // 2 - (c_w - crop_min_w)
-        right = s // 2 + (crop_max_w - c_w)
-        im_crop[up:down, left:right] = im[crop_min_h:crop_max_h, crop_min_w:crop_max_w]
-        im_crop = im_crop.squeeze()
-        im_resize = cv2.resize(im_crop, (res, res), interpolation=interpolate)
         s = s
-        if ndim == 2:
-            im_resize = np.squeeze(im_resize)
+
+        im_crop = crop_resize_by_warp_affine(im, np.array([c_w, c_h]), s, res).astype(np.float32)
 
         if return_roi_coord:
             coord_2d = get_2d_coord_np(max_w, max_h, fmt="HWC")
-            roi_coord_2d = crop_resize_by_warp_affine(coord_2d, np.array([c_w, c_h]), s, res).transpose(2, 0, 1).astype(np.float32) # HWC -> CHW
-            return im_resize, c_h, c_w, s, roi_coord_2d
+            roi_coord_2d = crop_resize_by_warp_affine(coord_2d, np.array([c_w, c_h]), s, res, interpolation=interpolate).transpose(2, 0, 1).astype(np.float32) # HWC -> CHW
+            return im_crop, c_h, c_w, s, roi_coord_2d
 
-        return im_resize, c_h, c_w, s
+        return im_crop, c_h, c_w, s
