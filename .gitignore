@@ -1,5 +1,6 @@
 wandb/
 logs/
+ov9d/
 ov9d_ablation/
 ov9d_dataset_test_3d_feature/
 image_samples/
