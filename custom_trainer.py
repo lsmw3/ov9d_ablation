@@ -2,14 +2,15 @@ from typing import Dict
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.nn import SmoothL1Loss, L1Loss
+import torch.nn.functional as F
+from torch.nn import SmoothL1Loss
 from mmcv.runner import build_optimizer
 import pytorch_lightning as L
 from scipy.spatial.transform import Rotation as R
 
 from models.model_wo_sd import OV9D
 import utils.logging as logging
-from utils.losses import angular_distance, rot_l2_loss
+from utils.losses import angular_distance, L1_reg_nocs_loss, CrossEntropyNocsMapLoss
 from utils.pose_postprocessing import pose_from_pred_centroid_z
 from utils.utils import draw_3d_bbox_with_coordinate_frame
 
@@ -34,9 +35,19 @@ class CustomTrainer(L.LightningModule):
         self.args = args
         self.model = OV9D(args)
         self.nocs_loss = logging.AverageMeter()
-        self.criterion = SmoothL1Loss(beta=0.1)
+        self.criterion_L1 = SmoothL1Loss(beta=0.1)
+        self.criterion_CE = CrossEntropyNocsMapLoss(reduction='sum', weight=None)
 
         self.total_val_steps = 0
+        self.xyz_bin = args.nocs_bin
+
+        x_cls_grid_center = (torch.arange(self.xyz_bin) + 0.5) / self.xyz_bin
+        y_cls_grid_center = (torch.arange(self.xyz_bin) + 0.5) / self.xyz_bin
+        z_cls_grid_center = (torch.arange(self.xyz_bin) + 0.5) / self.xyz_bin
+
+        self.register_buffer("x_grid_center", x_cls_grid_center.to(torch.float32))
+        self.register_buffer("y_grid_center", y_cls_grid_center.to(torch.float32))
+        self.register_buffer("z_grid_center", z_cls_grid_center.to(torch.float32))
 
     
     def _step(self, batch, prex, batch_idx):
@@ -49,6 +60,7 @@ class CustomTrainer(L.LightningModule):
         bbox_center = batch['bbox_center'] # (b, 2)
         ratio = batch['resize_ratio'].squeeze(-1) # (b)
         nocs = batch['nocs'].permute(0, 2, 3, 1) # (b, 480, 480, 3)
+        gt_xyz_bin = batch['gt_xyz_bin'] # (b, 3, 480, 480)
         dis_sym = batch['dis_sym']
         con_sym = batch['con_sym']
         gt_r = batch['gt_r'] # (b, 3, 3)
@@ -56,20 +68,19 @@ class CustomTrainer(L.LightningModule):
         cams = batch['cam'] # (b, 3, 3)
         gt_trans_ratio = batch["gt_trans_ratio"] # (B, 3)
 
-        is_train = prex == 'train'
-
         translation_ratio = 100
         gt_t = gt_t / translation_ratio
 
+        b, _, h, w = batch['image'].shape
+
         # normalize 3d points
-        b = feat_2d_bp.shape[0]
         feat_2d_bp_normed = []
         for i in range(b):
             feat_2d_bp_normed.append(normalize_3d_points(feat_2d_bp[i]))
         feat_2d_bp_normed = torch.stack(feat_2d_bp_normed, dim=0).to(feat_2d_bp)
 
-        preds = self.model(input_RGB, feat_2d_bp_normed, roi_coord_2d, class_ids=batch['class_id'])
-        pred_nocs = preds['pred_nocs'].permute(0, 2, 3, 1)
+        preds = self.model(input_RGB, feat_2d_bp_normed, input_MASK, roi_coord_2d, class_ids=batch['class_id'])
+        pred_nocs_feat, pred_nocs_offset = preds['pred_nocs_feat'], preds['pred_nocs_offset'] # (b, c, h, w), (b, 3, h ,w)
         pred_r, pred_t = preds['pred_r'], preds['pred_t']
 
         pred_ego_rot, pred_trans = pose_from_pred_centroid_z(
@@ -84,55 +95,32 @@ class CustomTrainer(L.LightningModule):
             is_allo=True,
             z_type='REL'
         )
-        
-        pred_nocs_list, gt_nocs_list = [], []
-        pred_bg_list, gt_bg_list = [], []
-        for b in range(batch['image'].shape[0]):
-            curr_pred_nocs = pred_nocs[b]
-            curr_gt_nocs = nocs[b]
-            curr_mask = input_MASK[b]
-            curr_pred_nocs_model = curr_pred_nocs[curr_mask]
-            curr_pred_bg = curr_pred_nocs[~curr_mask]
-            curr_gt_nocs_model = curr_gt_nocs[curr_mask]
-            curr_gt_bg = curr_gt_nocs[~curr_mask]
-            curr_pcl_m = curr_gt_nocs_model - 0.5  # nocs to pcl
-            # discrete symmetry
-            curr_dis_sym = dis_sym[b]
-            dis_sym_flag = torch.sum(torch.abs(curr_dis_sym), dim=(1, 2)) != 0
-            curr_dis_sym = curr_dis_sym[dis_sym_flag]
-            aug_pcl_m = torch.stack([curr_pcl_m], dim=0) # (1, n, 3)
-            for sym in curr_dis_sym:
-                rot, t = sym[0:3, 0:3], sym[0:3, 3]
-                rot_pcl_m = aug_pcl_m @ rot.T + t.reshape(1, 1, 3)
-                aug_pcl_m = torch.cat([aug_pcl_m, rot_pcl_m], dim=0) # (m, n ,3)
-            # continuous symmetry
-            curr_con_sym = con_sym[b]
-            con_sym_flag = torch.sum(torch.abs(curr_con_sym), dim=(-1)) != 0
-            curr_con_sym = curr_con_sym[con_sym_flag]
-            for sym in curr_con_sym:
-                axis = sym[:3].cpu().numpy()
-                angles = np.deg2rad(np.arange(5, 180, 5))
-                rotvecs = axis.reshape(1, 3) * angles.reshape(-1, 1)
-                rots = torch.from_numpy(R.from_rotvec(rotvecs).as_matrix()).to(curr_pcl_m)
-                rot_pcl_m_list = []
-                for rot in rots:
-                    rot_pcl_m = aug_pcl_m @ rot.T
-                    rot_pcl_m_list.append(rot_pcl_m)
-                aug_pcl_m = torch.cat([aug_pcl_m] + rot_pcl_m_list, dim=0)
-            curr_gt_nocs_set = aug_pcl_m + 0.5
-            with torch.no_grad():
-                curr_gt_nocs_set = torch.unbind(curr_gt_nocs_set, dim=0)
-                loss = list(map(lambda gt_nocs: self.criterion(curr_pred_nocs_model, gt_nocs), curr_gt_nocs_set))
-                min_idx = torch.argmin(torch.tensor(loss))
-            curr_gt_nocs_model = curr_gt_nocs_set[min_idx]
-            
-            pred_nocs_list.append(curr_pred_nocs_model)
-            gt_nocs_list.append(curr_gt_nocs_model)
-            pred_bg_list.append(curr_pred_bg)
-            gt_bg_list.append(curr_gt_bg)
 
         # nocs loss
-        loss_o = 2*self.criterion(torch.cat(pred_nocs_list), torch.cat(gt_nocs_list)) + 0.5*self.criterion(torch.cat(pred_bg_list), torch.cat(gt_bg_list))
+        if self.args.nocs_type == 'L1':
+            loss_o = L1_reg_nocs_loss(b, pred_nocs_feat.permute(0, 2, 3, 1), nocs, input_MASK, dis_sym, con_sym, self.criterion_L1)
+            pred_nocs = pred_nocs_feat.permute(0, 2, 3, 1)
+        elif self.args.nocs_type == 'CE':
+            out_x, out_y, out_z = torch.split(pred_nocs_feat, pred_nocs_feat.shape[1] // 3, dim=1) # (b, xyz_bin, h, w)
+            gt_xyz_bin = gt_xyz_bin.long() # (b, 3, h, w)
+            loss_coord_x = self.criterion_CE(out_x * input_MASK[:, None, :, :], gt_xyz_bin[:, 0] * input_MASK.long()) / input_MASK.sum().float().clamp(min=1.0)
+            loss_coord_y = self.criterion_CE(out_y * input_MASK[:, None, :, :], gt_xyz_bin[:, 1] * input_MASK.long()) / input_MASK.sum().float().clamp(min=1.0)
+            loss_coord_z = self.criterion_CE(out_z * input_MASK[:, None, :, :], gt_xyz_bin[:, 2] * input_MASK.long()) / input_MASK.sum().float().clamp(min=1.0)
+            loss_o = loss_coord_x + loss_coord_y + loss_coord_z
+
+            pred_nocs = torch.zeros_like(batch['nocs']).to(batch['nocs']) # (b, 3, h, w)
+            x_grid = self.x_grid_center.unsqueeze(0).unsqueeze(1).unsqueeze(1).expand(b, h, w, -1) # (b, h, w, xyz_bin)
+            y_grid = self.y_grid_center.unsqueeze(0).unsqueeze(1).unsqueeze(1).expand(b, h, w, -1) # (b, h, w, xyz_bin)
+            z_grid = self.z_grid_center.unsqueeze(0).unsqueeze(1).unsqueeze(1).expand(b, h, w, -1) # (b, h, w, xyz_bin)
+            for b_i in range(b):
+                pred_nocs[b_i][0] = x_grid[b_i][torch.arange(h)[:, None], torch.arange(w), gt_xyz_bin[b_i, 0]]
+                pred_nocs[b_i][1] = y_grid[b_i][torch.arange(h)[:, None], torch.arange(w), gt_xyz_bin[b_i, 1]]
+                pred_nocs[b_i][2] = z_grid[b_i][torch.arange(h)[:, None], torch.arange(w), gt_xyz_bin[b_i, 2]]
+            pred_nocs = pred_nocs.permute(0, 2, 3, 1)
+        else:
+            raise ValueError("The nocs type should be either CE of L1.")
+        
+        # self-supervision loss
 
         # rotation loss
         loss_rot = angular_distance(pred_ego_rot, gt_r)
@@ -172,13 +160,13 @@ class CustomTrainer(L.LightningModule):
 
         if prex == "train":
             if 0 == self.trainer.global_step % 10 and (self.trainer.local_rank == 0):
-                output_vis = self.vis_images(preds, batch, pred_ego_rot, pred_trans*translation_ratio)
+                output_vis = self.vis_images(batch, pred_nocs, pred_ego_rot, pred_trans*translation_ratio)
                 for key, value in output_vis.items():
                     imgs = [np.concatenate([img for img in value],axis=0)]
                     self.logger.log_image(f'{prex}/{key}', imgs, step=self.global_step)
         else:
             if 0 == self.total_val_steps % 10:
-                output_vis = self.vis_images(preds, batch, pred_ego_rot, pred_trans*translation_ratio)
+                output_vis = self.vis_images(batch, pred_nocs, pred_ego_rot, pred_trans*translation_ratio)
                 for key, value in output_vis.items():
                     imgs = [np.concatenate([img for img in value],axis=0)]
                     self.logger.log_image(f'{prex}/{key}', imgs, step=self.global_step)
@@ -201,13 +189,13 @@ class CustomTrainer(L.LightningModule):
             )
     
 
-    def vis_images(self, output, batch, pred_ego_rot, pred_trans):
+    def vis_images(self, batch, pred_nocs_vis, pred_ego_rot, pred_trans):
         outputs = {}
         B, C, H, W = batch['image'].shape
 
         gt_rgb = batch['image'].permute(0, 2, 3, 1).detach().cpu().numpy()
         gt_nocs = batch['nocs'].permute(0, 2, 3, 1).detach().cpu().numpy()
-        pred_nocs = output['pred_nocs'].permute(0, 2, 3, 1).detach().cpu().numpy()
+        pred_nocs = pred_nocs_vis.detach().cpu().numpy()
 
         raw_scene = batch['raw_scene'].permute(0, 2, 3, 1).detach().cpu().numpy() # (b, 480, 640, 3), np.uint8
         kps_3d_m = batch['kps_3d_m'].detach().cpu().numpy() # (B, 9, 3)

@@ -11,4 +11,12 @@ warped_image_self.jpg
 mask.jpg
 warped_mask.jpg
 vis_image.jpg
+img_vis.jpg
+dino_vis.jpg
+dino_vis_masked.jpg
+dino_vis_unresized.jpg
+dino_vis_masked_unresized.jpg
 point_cloud.pcd
+
+__pycache__/
+*/__pycache__/

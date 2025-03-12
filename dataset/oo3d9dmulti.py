@@ -9,11 +9,12 @@ from utils.utils import get_2d_coord_np, crop_resize_by_warp_affine
 
 
 class oo3d9dmulti(BaseDataset):
-    def __init__(self, data_path, data_name, data_type, feat_3d_path,
+    def __init__(self, data_path, data_name, data_type, feat_3d_path, xyz_bin: int=64,
                  is_train=True, scale_size=480, num_view=50):
         super().__init__()
 
         self.scale_size = scale_size
+        self.xyz_bin = xyz_bin
 
         self.is_train = is_train
         self.data_path = os.path.join(data_path, data_type)
@@ -118,10 +119,24 @@ class oo3d9dmulti(BaseDataset):
         rgb, c_h_, c_w_, s_, roi_coord_2d = self.zoom_in_v2(image, c, s, res=self.scale_size, return_roi_coord=True) # center-cropped rgb
         pcl_m, *_ = self.zoom_in_v2(pcl_m.astype(np.float32), c, s, res=self.scale_size, interpolate=interpolate) # center-cropped point cloud in model frame, (480, 480, 3)
         mask, *_ = self.zoom_in_v2(mask, c, s, res=self.scale_size, interpolate=interpolate) # center-cropped mask
-        mask = mask[..., 0] == 255
+        mask = mask[..., 0] >= 250
         rgb[mask[:, :, None] != [True, True, True]] = 70 # further align the background, especially in case the cropped rgb is outside the boundary of raw image
         center = (kps3d[0, 1] + kps3d[0, 8]) / 2 # seems this is the true center of the objects in 3d model frame (actually same as kps3d[0, 0])
         nocs = (pcl_m - center.reshape(1, 1, 3)) / diag + 0.5
+
+        # label each x, y, z channel into intergers between [0, bin-1], and the bg is bin
+        nocs_x, nocs_y, nocs_z = nocs[:, :, 0], nocs[:, :, 1], nocs[:, :, 2]
+        for nocs_plane in (nocs_x, nocs_y, nocs_z):
+            nocs_plane[nocs_plane < 0] = 0
+            nocs_plane[nocs_plane > 0.999999] = 0.999999
+        gt_x_bin = np.asarray(nocs_x * self.xyz_bin, dtype=np.uint8) # intergers interval [0, bin-1], bin is the background
+        gt_y_bin = np.asarray(nocs_y * self.xyz_bin, dtype=np.uint8)
+        gt_z_bin = np.asarray(nocs_z * self.xyz_bin, dtype=np.uint8)
+        gt_x_bin[np.logical_not(mask)] = self.xyz_bin
+        gt_y_bin[np.logical_not(mask)] = self.xyz_bin
+        gt_z_bin[np.logical_not(mask)] = self.xyz_bin
+        gt_xyz_bin = np.stack([gt_x_bin, gt_y_bin, gt_z_bin], axis=0) # (3, 480, 480)
+
         nocs[np.logical_not(mask)] = 0
         mask[np.sum(np.logical_or(nocs > 1, nocs < 0), axis=-1) != 0] = False
         c = np.array([c_w_, c_h_])
@@ -145,6 +160,7 @@ class oo3d9dmulti(BaseDataset):
         out_dict = {
             'raw_scene': raw_image.transpose((2, 0, 1)), # (3, H, W), dtype = np.uint8
             'image': (rgb.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 480, 480)
+            'gt_xyz_bin': gt_xyz_bin, # (3, H, W), dtype = np.uint8
             'bbox_size': s,
             'bbox_center': c,
             'roi_coord_2d': roi_coord_2d.astype(np.float32), # (2, 480, 480)

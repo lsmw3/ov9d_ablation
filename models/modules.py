@@ -51,7 +51,7 @@ class FeatureDownsampler(nn.Module):
     
 
 class MLP(nn.Module):
-    def __init__(self, *, device: torch.device, dtype: torch.dtype, width: int, init_scale: float):
+    def __init__(self, device: torch.device, dtype: torch.dtype, width: int, init_scale: float):
         super().__init__()
         self.width = width
         self.c_fc = nn.Linear(width, width * 4, device=device, dtype=dtype)
@@ -65,19 +65,23 @@ class MLP(nn.Module):
 
 
 class QKVMultiheadAttention(nn.Module):
-    def __init__(self, *, device: torch.device, dtype: torch.dtype, heads: int):
+    def __init__(self, device: torch.device, dtype: torch.dtype, heads: int):
         super().__init__()
         self.device = device
         self.dtype = dtype
         self.heads = heads
 
-    def forward(self, qkv):
+    def forward(self, qkv, query_mask=None, key_mask=None):
         bs, n_ctx, width = qkv.shape
         attn_ch = width // self.heads // 3
         scale = 1 / math.sqrt(math.sqrt(attn_ch))
         qkv = qkv.view(bs, n_ctx, self.heads, -1)
         q, k, v = torch.split(qkv, attn_ch, dim=-1)
         weight = torch.einsum("bthc,bshc->bhts", q * scale, k * scale)
+        if key_mask is not None:
+            weight = weight.masked_fill(~key_mask.unsqueeze(1).unsqueeze(1), float('-inf'))
+        if query_mask is not None:
+            weight = weight.masked_fill(~query_mask.unsqueeze(1).unsqueeze(-1), float('-inf'))
         wdtype = weight.dtype
         weight = torch.softmax(weight.float(), dim=-1).type(wdtype)
         return torch.einsum("bhts,bshc->bthc", weight, v).reshape(bs, n_ctx, -1)
@@ -86,7 +90,6 @@ class QKVMultiheadAttention(nn.Module):
 class MultiheadAttention(nn.Module):
     def __init__(
         self,
-        *,
         device: torch.device,
         dtype: torch.dtype,
         width: int,
@@ -102,9 +105,9 @@ class MultiheadAttention(nn.Module):
         init_linear(self.c_qkv, init_scale)
         init_linear(self.c_proj, init_scale)
 
-    def forward(self, x):
+    def forward(self, x, query_mask=None, key_mask=None):
         qkv = self.c_qkv(x)
-        x = self.attention(qkv)
+        x = self.attention(qkv, query_mask=query_mask, key_mask=key_mask)
         x = self.c_proj(x)
         return x
 
@@ -120,6 +123,8 @@ class ResidualAttentionBlock(nn.Module):
     ):
         super().__init__()
 
+        init_scale = init_scale * math.sqrt(1.0 / width)
+
         self.attn = MultiheadAttention(
             device=device,
             dtype=dtype,
@@ -131,8 +136,8 @@ class ResidualAttentionBlock(nn.Module):
         self.mlp = MLP(device=device, dtype=dtype, width=width, init_scale=init_scale)
         self.ln_2 = nn.LayerNorm(width, device=device, dtype=dtype)
 
-    def forward(self, x: torch.Tensor):
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x: torch.Tensor, query_mask: torch.Tensor = None, key_mask: torch.Tensor = None):
+        x = x + self.attn(self.ln_1(x), query_mask=query_mask, key_mask=key_mask)
         x = x + self.mlp(self.ln_2(x))
         return x
     

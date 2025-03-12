@@ -21,6 +21,7 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--data_train', type=str, default='train')
         parser.add_argument('--data_val', type=str, default='val')
         parser.add_argument('--data_3d_feat', type=str, default=None)
+        parser.add_argument('--ckpt', type=str, default=None)
 
         # experiment configs
         parser.add_argument('--epochs',      type=int,   default=25)

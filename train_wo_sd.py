@@ -34,7 +34,8 @@ def main():
         'data_path': args.data_path, 
         'data_name': args.data_name, 
         'data_type': args.data_train,
-        'feat_3d_path': args.data_3d_feat 
+        'feat_3d_path': args.data_3d_feat ,
+        'xyz_bin': args.nocs_bin
     }
     dataset_kwargs['scale_size'] = args.scale_size
 
@@ -54,7 +55,7 @@ def main():
                               pin_memory=True,
                               drop_last=True)
     val_loader = DataLoader(val_dataset,
-                            batch_size=12,
+                            batch_size=3,
                             sampler=sampler_val,
                             pin_memory=True)
     
@@ -75,7 +76,7 @@ def main():
         monitor='val/loss',
         # save_last=True,
         save_top_k=3,             # Set to -1 to save all checkpoints
-        every_n_epochs=10,
+        every_n_epochs=50,
         save_on_train_epoch_end=True
     )
 
@@ -91,7 +92,7 @@ def main():
                         logger=logger,
                         gradient_clip_val=0.5,
                         callbacks=[checkpoint_callback],
-                        check_val_every_n_epoch=1,
+                        check_val_every_n_epoch=5,
                         limit_val_batches=1.,  # Run on only 10% of the validation data
                         limit_train_batches=1.,
                         )
@@ -102,7 +103,7 @@ def main():
         my_trainer, 
         train_dataloaders=train_loader,
         val_dataloaders=val_loader,
-        # ckpt_path='/path/to/checkpoint'
+        # ckpt_path=args.ckpt
         )
     
     dt = datetime.now() - t0
