@@ -31,10 +31,14 @@ class BaseOptions():
         parser.add_argument('--num_filters', nargs='+', type=int)
         parser.add_argument('--deconv_kernels', nargs='+', type=int)
 
+        parser.add_argument('--raw_w', type=int, default=640)
+        parser.add_argument('--raw_h', type=int, default=480)
+
         parser.add_argument('--dino', action='store_true') 
         parser.add_argument('--dino_type', type=str, default=None)
         parser.add_argument('--attn_depth', type=int, default=4)
 
+        parser.add_argument('--low_res_sup', type=bool, default=True)
         parser.add_argument('--nocs_type', type=str, default="CE")
         parser.add_argument('--nocs_bin', type=int, default=32)
 

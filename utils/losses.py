@@ -132,17 +132,21 @@ def _assert_no_grad(tensor):
     )
 
 class CrossEntropyNocsMapLoss(nn.Module):
-    def __init__(self, reduction, weight=None):
+    def __init__(self, reduction, weight=None, ignore_index=-100):
         super(CrossEntropyNocsMapLoss, self).__init__()
         self.m = nn.LogSoftmax(dim=1)
+        self.ignore_index = ignore_index
         if weight is not None:  # bin_size+1
             weight_ = torch.ones(weight)
             weight_[weight - 1] = 0 # bg
-            self.loss = nn.NLLLoss(reduction=reduction, weight=weight_)
+            self.loss = nn.NLLLoss(reduction=reduction, weight=weight_, ignore_index=ignore_index)
         else:
-            self.loss = nn.NLLLoss(reduction=reduction)
+            self.loss = nn.NLLLoss(reduction=reduction, ignore_index=ignore_index)
 
-    def forward(self, coor, gt_coor):
+    def forward(self, coor, gt_coor, mask):
         _assert_no_grad(gt_coor)
-        loss = self.loss(self.m(coor), gt_coor)
+        log_probs = self.m(coor)
+        gt_coor_masked = gt_coor.clone()  
+        gt_coor_masked[mask == False] = self.ignore_index
+        loss = self.loss(log_probs, gt_coor_masked)
         return loss

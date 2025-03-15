@@ -17,6 +17,8 @@ dino_vis.jpg
 dino_vis_masked.jpg
 dino_vis_unresized.jpg
 dino_vis_masked_unresized.jpg
+gt_nocs.jpg
+pred_nocs.jpg
 point_cloud.pcd
 
 __pycache__/
