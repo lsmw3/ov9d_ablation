@@ -38,33 +38,33 @@ files = [
     'oo3d9dsingle_class_embeddings.pth', 
 ]
 
-for f in files:
-    if os.path.exists(f):
-        print(f'File {f} existed, skip download')
-        continue
-    print(f'Downloading {f} ...')
-    url = os.path.join(base_url, f)
-    subprocess.call(f'wget {url}', shell=True)
-    print(f'File {f} successfully downloaded')
+# for f in files:
+#     if os.path.exists(f):
+#         print(f'File {f} existed, skip download')
+#         continue
+#     print(f'Downloading {f} ...')
+#     url = os.path.join(base_url, f)
+#     subprocess.call(f'wget {url}', shell=True)
+#     print(f'File {f} successfully downloaded')
 
-with open('oo3d9dsingle.txt', 'r') as f:
-    files = f.readlines()
-os.makedirs('oo3d9dsingle', exist_ok=True)
-os.chdir('oo3d9dsingle')
-for f in files:
-    f = f[:-1]
-    if os.path.exists(f) or os.path.exists(f.split('.')[0]):
-        print(f'File {f} existed, skip download')
-        continue
-    print(f'Downloading {f} ...')
-    url = os.path.join(base_url, 'oo3d9dsingle', f)
-    subprocess.call(f'wget {url}', shell=True)
-    print(f'File {f} successfully downloaded')
-    print(f'Uncompressing {f} ...')
-    subprocess.call(f'tar -zxvf {f}', shell=True)
-    print(f'File {f} successfully extracted')
-    subprocess.call(f'rm {f}', shell=True)
-os.chdir('..')
+# with open('oo3d9dsingle.txt', 'r') as f:
+#     files = f.readlines()
+# os.makedirs('oo3d9dsingle', exist_ok=True)
+# os.chdir('oo3d9dsingle')
+# for f in files:
+#     f = f[:-1]
+#     if os.path.exists(f) or os.path.exists(f.split('.')[0]):
+#         print(f'File {f} existed, skip download')
+#         continue
+#     print(f'Downloading {f} ...')
+#     url = os.path.join(base_url, 'oo3d9dsingle', f)
+#     subprocess.call(f'wget {url}', shell=True)
+#     print(f'File {f} successfully downloaded')
+#     print(f'Uncompressing {f} ...')
+#     subprocess.call(f'tar -zxvf {f}', shell=True)
+#     print(f'File {f} successfully extracted')
+#     subprocess.call(f'rm {f}', shell=True)
+# os.chdir('..')
 
 folders = []
 if args.multi:
@@ -75,7 +75,7 @@ if args.models:
 for folder in folders:
     os.makedirs(folder, exist_ok=True)
     os.chdir(folder)
-    for i in range(1, 101):
+    for i in range(1, 20):
         f = f'batch_{i}.tgz'
         if os.path.exists(f):
             print(f'File {f} existed, skip download')
