@@ -5,15 +5,16 @@ import numpy as np
 from scipy.stats import truncnorm
 from scipy.spatial.transform import Rotation as R
 from dataset.base_dataset import BaseDataset
-from utils.utils import get_2d_coord_np, crop_resize_by_warp_affine
+from utils.utils import get_2d_coord_np, crop_resize_by_warp_affine, filter_small_edge_obj, get_coarse_mask
 
 
 class oo3d9dmulti(BaseDataset):
-    def __init__(self, data_path, data_name, data_type, feat_3d_path, xyz_bin: int=64,
-                 is_train=True, scale_size=480, num_view=50):
+    def __init__(self, data_path, data_name, data_type, feat_3d_path, xyz_bin: int=64, raw_h: int=480, raw_w: int=640,
+                 is_train=True, scale_size=490, num_view=50):
         super().__init__()
 
         self.scale_size = scale_size
+        self.resize = 224
         self.xyz_bin = xyz_bin
 
         self.is_train = is_train
@@ -47,6 +48,8 @@ class oo3d9dmulti(BaseDataset):
                 for obj_id in objects_ids_in_scene:
                     if scene_gt_info[view_id][obj_id]['bbox_visib'][2] < 50 or scene_gt_info[view_id][0]['bbox_visib'][3] < 50:
                         continue
+                    # if filter_small_edge_obj(scene_gt_info[view_id][obj_id]['bbox_visib'], raw_w, raw_h):
+                    #     continue
                     self.data_list.append(
                         {
                             'scene': scene_id,
@@ -94,6 +97,7 @@ class oo3d9dmulti(BaseDataset):
         mask_path = os.path.join(self.data_path, scene, 'mask_visib', '_'.join([view, obj_in_scene])+'.png')
 
         image = cv2.imread(rgb_path)
+        H, W = image.shape[:2] # 480, 640
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         raw_image = image.copy()
         depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
@@ -103,7 +107,7 @@ class oo3d9dmulti(BaseDataset):
 
         # vis_img = draw_3d_bbox_with_coordinate_frame(image, kps3d[0], cam_R_m2c, cam_t_m2c.reshape(-1), cam_K)
 
-        image[mask != 255] = 70 # remove background
+        image[mask != 255] = 0 # remove background
 
         if self.is_train:
             c, s = self.xywh2cs_dzi(bbox, wh_max=self.scale_size)
@@ -120,7 +124,7 @@ class oo3d9dmulti(BaseDataset):
         pcl_m, *_ = self.zoom_in_v2(pcl_m.astype(np.float32), c, s, res=self.scale_size, interpolate=interpolate) # center-cropped point cloud in model frame, (480, 480, 3)
         mask, *_ = self.zoom_in_v2(mask, c, s, res=self.scale_size, interpolate=interpolate) # center-cropped mask
         mask = mask[..., 0] >= 250
-        rgb[mask[:, :, None] != [True, True, True]] = 70 # further align the background, especially in case the cropped rgb is outside the boundary of raw image
+        rgb[mask[:, :, None] != [True, True, True]] = 0 # further align the background, especially in case the cropped rgb is outside the boundary of raw image
         center = (kps3d[0, 1] + kps3d[0, 8]) / 2 # seems this is the true center of the objects in 3d model frame (actually same as kps3d[0, 0])
         nocs = (pcl_m - center.reshape(1, 1, 3)) / diag + 0.5
 
@@ -138,10 +142,22 @@ class oo3d9dmulti(BaseDataset):
         gt_xyz_bin = np.stack([gt_x_bin, gt_y_bin, gt_z_bin], axis=0) # (3, 480, 480)
 
         nocs[np.logical_not(mask)] = 0
+        nocs_resized = np.stack([cv2.resize(nocs[..., i], (self.scale_size//14, self.scale_size//14), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
         mask[np.sum(np.logical_or(nocs > 1, nocs < 0), axis=-1) != 0] = False
+        mask_resized = get_coarse_mask(mask, scale_factor=(1 / 14))
+        # rgb_resized = np.stack([cv2.resize(rgb[..., i], (self.resize, self.resize), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
+        # mask_rgb_resized = get_coarse_mask(mask, scale_factor=(self.resize / self.scale_size))
+        # rgb_resized[mask_rgb_resized[:, :, None] != [True, True, True]] = 0
+        nocs_resized[np.logical_not(mask_resized)] = 0
+
         c = np.array([c_w_, c_h_])
         s = s_
         kp_i = (kp_i - c.reshape(1, 1, 2)) / s  # * self.scale_size
+
+        gt_coord_x = np.arange(W)
+        gt_coord_y = np.arange(H)
+        gt_coord_xy = np.asarray(np.meshgrid(gt_coord_x, gt_coord_y)).transpose(1, 2 ,0)
+        gt_coord_2d = crop_resize_by_warp_affine(gt_coord_xy, c, s, self.scale_size, interpolation=cv2.INTER_NEAREST).astype(np.float32) # HWC
         
         dis_sym = np.zeros((3, 4, 4))
         if 'symmetries_discrete' in self.models_info[f'{obj_id}']:
@@ -159,26 +175,32 @@ class oo3d9dmulti(BaseDataset):
 
         out_dict = {
             'raw_scene': raw_image.transpose((2, 0, 1)), # (3, H, W), dtype = np.uint8
-            'image': (rgb.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 480, 480)
+            'image': (rgb.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 490, 490)
+            # 'input_image': (rgb_resized.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 224, 224)
             'gt_xyz_bin': gt_xyz_bin, # (3, H, W), dtype = np.uint8
+            'gt_coord_2d': gt_coord_2d.astype(np.float32), # (490, 490, 2)
             'bbox_size': s,
             'bbox_center': c,
-            'roi_coord_2d': roi_coord_2d.astype(np.float32), # (2, 480, 480)
+            'roi_coord_2d': roi_coord_2d.astype(np.float32), # (2, 490, 490)
             'gt_r': cam_R_m2c.astype(np.float32),
             'gt_t': cam_t_m2c.reshape(-1).astype(np.float32),
             'cam': cam_K.astype(np.float32),
             'resize_ratio': np.array([self.scale_size / s], dtype=np.float32),
             'gt_trans_ratio': trans_ratio.reshape(-1).astype(np.float32),
-            'mask': mask, # (480, 480)
-            'nocs': nocs.transpose((2, 0, 1)).astype(np.float32), # (3, 480, 480)
+            'mask': mask, # (490, 490)
+            'mask_resized': mask_resized, # (32, 32)
+            'nocs': nocs.transpose((2, 0, 1)).astype(np.float32), # (3, 490, 490)
+            'nocs_resized': nocs_resized.transpose((2, 0, 1)).astype(np.float32), # (3, 32, 32)
             # 'kps': kp_i.astype(np.float32),
             'kps_3d_m': kps3d[0].astype(np.float32), # (9, 3)
+            'kps_3d_center': center.astype(np.float32), # (3)
+            'kps_3d_dig': np.array([diag], dtype=np.float32),
             'dis_sym': dis_sym.astype(np.float32),
             'con_sym': con_sym.astype(np.float32),
             'filename': '-'.join([scene, view]),
             'class_id': class_id,
             'obj_id': obj_id,
-            'pcl_model': pcl_m.astype(np.float32), # (480, 480, 3)
+            'pcl_model': pcl_m.astype(np.float32), # (490, 490, 3)
             # '3d_feat': feat_3d.astype(np.float32) # (1024, 387)
         }
 

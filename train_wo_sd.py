@@ -35,7 +35,9 @@ def main():
         'data_name': args.data_name, 
         'data_type': args.data_train,
         'feat_3d_path': args.data_3d_feat ,
-        'xyz_bin': args.nocs_bin
+        'xyz_bin': args.nocs_bin,
+        'raw_w': args.raw_w,
+        'raw_h': args.raw_h
     }
     dataset_kwargs['scale_size'] = args.scale_size
 
@@ -72,7 +74,7 @@ def main():
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=os.path.join(args.log_dir, "ov9d_ablation"),
-        filename='epoch_{epoch}',
+        filename='{epoch}',
         monitor='val/loss',
         # save_last=True,
         save_top_k=3,             # Set to -1 to save all checkpoints
@@ -103,7 +105,7 @@ def main():
         my_trainer, 
         train_dataloaders=train_loader,
         val_dataloaders=val_loader,
-        # ckpt_path=args.ckpt
+        # ckpt_path="logs/ov9d_ablation/epoch=149.ckpt"
         )
     
     dt = datetime.now() - t0

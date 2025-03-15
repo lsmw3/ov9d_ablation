@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from featup.layers import ChannelNorm
+
 
 def init_linear(l, stddev):
     nn.init.normal_(l.weight, std=stddev)
@@ -140,6 +142,37 @@ class ResidualAttentionBlock(nn.Module):
         x = x + self.attn(self.ln_1(x), query_mask=query_mask, key_mask=key_mask)
         x = x + self.mlp(self.ln_2(x))
         return x
+    
+
+class Featup(nn.Module):
+    def __init__(self, use_norm=True):
+        super().__init__()
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Load original model
+        self.model = torch.hub.load("mhamilton723/FeatUp", 'dinov2', use_norm=False).to(device)
+        # Create separate normalization layer
+        self.channel_norm = ChannelNorm(384) if use_norm else nn.Identity()
+        
+    def forward(self, x):
+        return self.model.upsampler(self.get_patch_token(x), x)
+    
+    def get_patch_token(self, x):
+        features = self.model.model(x)  # Get features including CLS token
+        # Apply normalization
+        features = self.channel_norm(features)
+        return features
+    
+    def get_feat(self, x):
+        batch_size = x.shape[0]
+        patch_token = self.model.model(x).permute(0,2,3,1).reshape(batch_size,-1,384)
+        cls_token = self.model.model.get_cls_token(x).unsqueeze(1)
+        features = torch.cat([cls_token, patch_token], dim=1)
+        norm = torch.linalg.norm(features, dim=-1)[:, :, None]
+        features = features / norm
+        patch_token = features[:,1:,:].permute(0,2,1).reshape(batch_size,384,16,16)
+        cls_token = features[:,0,:]
+
+        return patch_token, cls_token
     
 
 class DropBlock2D(nn.Module):

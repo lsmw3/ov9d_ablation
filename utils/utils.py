@@ -1,6 +1,57 @@
 import numpy as np
 import torch
 import cv2
+import torch.nn.functional as F
+
+
+def get_coarse_mask(mask, scale_factor=1/7):
+
+        if len(mask.shape) == 2:
+            mask = mask[None][None]
+        elif len(mask.shape) == 3:
+            mask = mask[None]
+        else:
+            raise ValueError("mask should be 2D or 3D arrays")
+        
+        if isinstance(mask, np.ndarray):
+            mask = torch.tensor(mask)
+        
+        mask_c = F.interpolate(mask.float(),
+                            scale_factor=scale_factor,
+                            mode='nearest',
+                            recompute_scale_factor=False)[0].squeeze(0)
+
+        mask_c = mask_c.bool().numpy()
+
+        return mask_c
+
+
+def filter_small_edge_obj(bbox, img_w, img_h, vis_threshold=0.3):
+    x, y, w, h = bbox
+
+    x_min = x - (w / 2)
+    y_min = y - (h / 2)
+    x_max = x + (w / 2)
+    y_max = y + (h / 2)
+
+    full_area = w * h
+    if full_area <= 0:
+        return True
+    
+    visible_x_min = max(0, x_min)
+    visible_y_min = max(0, y_min)
+    visible_x_max = min(img_w, x_max)
+    visible_y_max = min(img_h, y_max)
+    
+    visible_width = max(0, visible_x_max - visible_x_min)
+    visible_height = max(0, visible_y_max - visible_y_min)
+    visible_area = visible_width * visible_height
+    
+    visibility_ratio = visible_area / full_area
+    if visibility_ratio <= vis_threshold:
+        return True
+    else:
+        return False
 
 
 def get_2d_coord_np(width, height, low=0, high=1, fmt="CHW"):
@@ -97,6 +148,48 @@ def get_dir(src_point, rot_rad):
     src_result[1] = src_point[0] * sn + src_point[1] * cs
 
     return src_result
+
+
+def center_to_pixel_bbox(center, size):
+    """
+    Convert bounding box centers to 2D pixel bounding boxes.
+    
+    Args:
+        center: Tensor or array of shape (2,) representing the center coordinates (x, y)
+        size: Integer or tuple representing the width and height of the bounding box
+    
+    Returns:
+        Tensor or array of shape (2, size, size) representing 2D pixel bounding boxes
+    """
+    
+    # Handle both int size and (width, height) tuple
+    if isinstance(size, int):
+        width, height = size, size
+    else:
+        width, height = size
+    
+    # Create empty bounding boxes
+    if isinstance(center, torch.Tensor):
+        bbox = torch.zeros((2, height, width)).to(center)
+    else:
+        bbox = np.zeros((2, height, width))
+    
+    # For each box in the batch
+    # Get center coordinates
+    cx, cy = center
+    
+    # Calculate top-left corner
+    x0 = cx - width // 2
+    y0 = cy - height // 2
+    
+    # Generate coordinate grids
+    for y in range(height):
+        for x in range(width):
+            # Store absolute pixel coordinates
+            bbox[0, y, x] = x0 + x  # x-coordinate
+            bbox[1, y, x] = y0 + y  # y-coordinate
+    
+    return bbox
 
 
 def draw_3d_bbox_with_coordinate_frame(image, keypoints, m2c_R, m2c_t, camera_matrix, dist_coeffs=None):
