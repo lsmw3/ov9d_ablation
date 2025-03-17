@@ -57,7 +57,7 @@ def main():
                               pin_memory=True,
                               drop_last=True)
     val_loader = DataLoader(val_dataset,
-                            batch_size=3,
+                            batch_size=args.batch_size,
                             sampler=sampler_val,
                             pin_memory=True)
     
@@ -89,7 +89,7 @@ def main():
                         max_epochs=args.epochs,
                         # max_epochs=1,
                         accelerator='gpu',
-                        # strategy=strategy,
+                        strategy=DDPStrategy(find_unused_parameters=True),
                         accumulate_grad_batches=1,
                         logger=logger,
                         gradient_clip_val=0.5,

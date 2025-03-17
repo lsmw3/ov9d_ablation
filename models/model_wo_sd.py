@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import torchvision
 from torchvision import transforms
 
-from .modules import MLP_3D_POS, FeatureDownsampler, ResidualAttentionBlock, DropBlock2D, LinearScheduler, Featup
+from .modules import MLP_3D_POS, FeatureDownsampler, ResidualAttentionBlock, DropBlock2D, LinearScheduler
 from utils.pose_utils import quat2mat_torch, ortho6d_to_mat_batch
 
 
@@ -117,7 +117,6 @@ class OV9D(nn.Module):
 
         if args.dino:
             self.decoder = Decoder_MLP(device='cuda', dtype=torch.float32, in_channel=dino_dim, out_channel=3) if args.low_res_sup else Decoder(dino_dim, embed_dim, args)
-            # self.dino = Featup()
             self.dino = torch.hub.load('facebookresearch/dinov2', __DINO_MODEL__[args.dino_type])
             for p in self.dino.parameters():
                 p.requires_grad = False

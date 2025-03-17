@@ -145,7 +145,7 @@ class CustomTrainer(L.LightningModule):
         pred_pcl_2d = pred_pcl_2d[:, :2, :] / pred_pcl_2d[:, 2:3, :]
         gt_pcl_2d = gt_coord_2d
         loss_self_suv = (nn.MSELoss(reduction='none')(pred_pcl_2d.reshape(b, 2, h, w).permute(0, 2 ,3 ,1), gt_pcl_2d)*mask.unsqueeze(-1)).sum() ** 0.5 / mask.sum().float().clamp(min=1.0)
-
+        
         # rotation loss
         loss_rot = angular_distance(pred_ego_rot, gt_r)
 
@@ -164,7 +164,7 @@ class CustomTrainer(L.LightningModule):
         loss_z = nn.L1Loss(reduction="mean")(pred_t[:, 2], gt_trans_ratio[:, 2]/translation_ratio)
 
         # total loss
-        loss_total = 2*loss_o + 1e-4*loss_self_suv + loss_rot + 0.1*loss_trans + 0.1*loss_bind + loss_centroid + 0.1*loss_z
+        loss_total = loss_o + 1e-4*loss_self_suv + loss_rot + 0.1*loss_trans + 0.1*loss_bind + loss_centroid + 0.1*loss_z
         # loss_total = 2*loss_o + 1e-4*loss_self_suv
 
         self.nocs_loss.update(loss_o.detach().item(), gt_rgb.size(0))
@@ -188,13 +188,13 @@ class CustomTrainer(L.LightningModule):
         self.log_step(loss_dict, prex)
 
         if prex == "train":
-            if 0 == self.trainer.global_step % 20 and (self.trainer.local_rank == 0):
+            if 0 == self.trainer.global_step % 5000 and (self.trainer.local_rank == 0):
                 output_vis = self.vis_images(batch, gt_nocs, nocs, pred_nocs*mask_resized.unsqueeze(-1), pred_nocs_ori_size*mask.unsqueeze(-1), pred_ego_rot, pred_trans*translation_ratio)
                 for key, value in output_vis.items():
                     imgs = [np.concatenate([img for img in value],axis=0)]
                     self.logger.log_image(f'{prex}/{key}', imgs, step=self.global_step)
         else:
-            if 0 == self.total_val_steps % 20:
+            if 0 == self.total_val_steps % 1000:
                 output_vis = self.vis_images(batch, gt_nocs, nocs, pred_nocs*mask_resized.unsqueeze(-1), pred_nocs_ori_size*mask.unsqueeze(-1), pred_ego_rot, pred_trans*translation_ratio)
                 for key, value in output_vis.items():
                     imgs = [np.concatenate([img for img in value],axis=0)]
@@ -204,7 +204,7 @@ class CustomTrainer(L.LightningModule):
 
         torch.cuda.empty_cache()
 
-        return loss_total
+        return loss_total * 0.2
     
 
     def log_step(self, objectives: Dict[str, torch.Tensor], prex: str):

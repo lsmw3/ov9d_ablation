@@ -48,8 +48,8 @@ class oo3d9dmulti(BaseDataset):
                 for obj_id in objects_ids_in_scene:
                     if scene_gt_info[view_id][obj_id]['bbox_visib'][2] < 50 or scene_gt_info[view_id][0]['bbox_visib'][3] < 50:
                         continue
-                    # if filter_small_edge_obj(scene_gt_info[view_id][obj_id]['bbox_visib'], raw_w, raw_h):
-                    #     continue
+                    if filter_small_edge_obj(scene_gt_info[view_id][obj_id]['bbox_visib'], raw_w, raw_h):
+                        continue
                     self.data_list.append(
                         {
                             'scene': scene_id,
