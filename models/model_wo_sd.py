@@ -8,7 +8,8 @@ import torch.nn.functional as F
 import torchvision
 from torchvision import transforms
 
-from .modules import MLP_3D_POS, FeatureDownsampler, ResidualAttentionBlock, DropBlock2D, LinearScheduler
+from .modules import MLP_3D_POS, FeatureDownsampler, ResidualAttentionBlock, DropBlock2D, LinearScheduler, Featup
+from .retrieval_attention import ViewTransformer
 from utils.pose_utils import quat2mat_torch, ortho6d_to_mat_batch
 
 
@@ -111,7 +112,8 @@ class OV9D(nn.Module):
         # self.feat_3d_mlp = MLP_3D_POS(device='cuda', dtype=torch.float32, in_feature=3, width=pos_dim)
         self.attention = nn.ModuleList()
         for _ in range(args.attn_depth):
-            self.attention.append(ResidualAttentionBlock(device='cuda', dtype=torch.float32, width=dino_dim, heads=8, init_scale=0.25))
+            # self.attention.append(ResidualAttentionBlock(device='cuda', dtype=torch.float32, width=dino_dim, heads=8, init_scale=0.25))
+            self.attention.append(ViewTransformer(width=dino_dim, attn_depth=args.attn_depth))
 
         self.norm = nn.LayerNorm(dino_dim)
 

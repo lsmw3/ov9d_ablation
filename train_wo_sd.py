@@ -93,6 +93,7 @@ def main():
                         accumulate_grad_batches=1,
                         logger=logger,
                         gradient_clip_val=0.5,
+                        gradient_clip_algorithm="value",
                         callbacks=[checkpoint_callback],
                         check_val_every_n_epoch=5,
                         limit_val_batches=1.,  # Run on only 10% of the validation data
@@ -105,7 +106,7 @@ def main():
         my_trainer, 
         train_dataloaders=train_loader,
         val_dataloaders=val_loader,
-        # ckpt_path="logs/ov9d_ablation/epoch=149.ckpt"
+        # ckpt_path="logs/ov9d_ablation/epoch=749.ckpt"
         )
     
     dt = datetime.now() - t0

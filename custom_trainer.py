@@ -145,7 +145,9 @@ class CustomTrainer(L.LightningModule):
         pred_pcl_2d = pred_pcl_2d[:, :2, :] / pred_pcl_2d[:, 2:3, :]
         gt_pcl_2d = gt_coord_2d
         loss_self_suv = (nn.MSELoss(reduction='none')(pred_pcl_2d.reshape(b, 2, h, w).permute(0, 2 ,3 ,1), gt_pcl_2d)*mask.unsqueeze(-1)).sum() ** 0.5 / mask.sum().float().clamp(min=1.0)
-        
+
+        loss_self_suv = self.rescale_loss(loss_self_suv)
+
         # rotation loss
         loss_rot = angular_distance(pred_ego_rot, gt_r)
 
@@ -164,7 +166,7 @@ class CustomTrainer(L.LightningModule):
         loss_z = nn.L1Loss(reduction="mean")(pred_t[:, 2], gt_trans_ratio[:, 2]/translation_ratio)
 
         # total loss
-        loss_total = loss_o + 1e-4*loss_self_suv + loss_rot + 0.1*loss_trans + 0.1*loss_bind + loss_centroid + 0.1*loss_z
+        loss_total = 2*loss_o + loss_self_suv + loss_rot + 0.1*loss_trans + 0.1*loss_bind + loss_centroid + 0.1*loss_z
         # loss_total = 2*loss_o + 1e-4*loss_self_suv
 
         self.nocs_loss.update(loss_o.detach().item(), gt_rgb.size(0))
@@ -204,7 +206,22 @@ class CustomTrainer(L.LightningModule):
 
         torch.cuda.empty_cache()
 
-        return loss_total * 0.2
+        return loss_total
+    
+
+    def rescale_loss(self, loss):
+        if loss > 1000:
+            loss = loss * 1e-4
+        elif 1000 >= loss > 100:
+            loss = loss * 1e-3
+        elif 100 >= loss > 10:
+            loss = loss * 1e-2
+        elif 10 >= loss > 1:
+            loss = loss * 0.1
+        else:
+            loss = loss
+        
+        return loss
     
 
     def log_step(self, objectives: Dict[str, torch.Tensor], prex: str):
