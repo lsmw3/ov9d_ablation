@@ -50,13 +50,13 @@ class CustomTrainer(L.LightningModule):
         self.register_buffer("z_grid_center", torch.cat([z_cls_grid_center, torch.tensor([0])]).to(torch.float32))
 
     
-    def _step(self, batch, prex, batch_idx):
+    def _step(self, batch, prex, batch_idx, log=True):
         gt_rgb = batch['image']
         # input_rgb = batch['input_image']
         mask = batch['mask'].to(bool)
         mask_resized = batch['mask_resized'].to(bool)
         # feat_3d = batch['3d_feat']
-        feat_2d_bp = batch['pcl_model'] # (b, 480, 480, 3)
+        # feat_2d_bp = batch['pcl_model'] # (b, 480, 480, 3)
         roi_coord_2d = batch['roi_coord_2d'] # (b, 2, 480, 480)
         bbox_wh = batch['bbox_size'] # (b)
         bbox_center = batch['bbox_center'] # (b, 2)
@@ -83,13 +83,13 @@ class CustomTrainer(L.LightningModule):
 
         b, _, h, w = batch['image'].shape
 
-        # normalize 3d points
-        feat_2d_bp_normed = []
-        for i in range(b):
-            feat_2d_bp_normed.append(normalize_3d_points(feat_2d_bp[i]))
-        feat_2d_bp_normed = torch.stack(feat_2d_bp_normed, dim=0).to(feat_2d_bp)
+        # # normalize 3d points
+        # feat_2d_bp_normed = []
+        # for i in range(b):
+        #     feat_2d_bp_normed.append(normalize_3d_points(feat_2d_bp[i]))
+        # feat_2d_bp_normed = torch.stack(feat_2d_bp_normed, dim=0).to(feat_2d_bp)
 
-        preds = self.model(gt_rgb, feat_2d_bp_normed, mask, roi_coord_2d, class_ids=batch['class_id'])
+        preds = self.model(gt_rgb, mask, roi_coord_2d)
         pred_nocs_feat, pred_nocs_offset = preds['pred_nocs_feat'], preds['pred_nocs_offset'] # (b, c, h, w), (b, 3, h ,w)
         pred_nocs_feat_ori_size = None
         if 'pred_nocs_ori_size' in preds:
@@ -166,8 +166,8 @@ class CustomTrainer(L.LightningModule):
         loss_z = nn.L1Loss(reduction="mean")(pred_t[:, 2], gt_trans_ratio[:, 2]/translation_ratio)
 
         # total loss
-        loss_total = 2*loss_o + loss_self_suv + loss_rot + 0.1*loss_trans + 0.1*loss_bind + loss_centroid + 0.1*loss_z
-        # loss_total = 2*loss_o + 1e-4*loss_self_suv
+        # loss_total = 2*loss_o + loss_self_suv + loss_rot + 0.1*loss_trans + 0.1*loss_bind + loss_centroid + 0.1*loss_z
+        loss_total = 2*loss_o + loss_self_suv
 
         self.nocs_loss.update(loss_o.detach().item(), gt_rgb.size(0))
 
@@ -187,22 +187,23 @@ class CustomTrainer(L.LightningModule):
             loss_dict.update({'regression loss': loss_regression.item()})
 
         # self.log(f'{prex}/loss', loss_o, on_step=True, on_epoch=True, prog_bar=True)
-        self.log_step(loss_dict, prex)
+        if log:
+            self.log_step(loss_dict, prex)
 
-        if prex == "train":
-            if 0 == self.trainer.global_step % 5000 and (self.trainer.local_rank == 0):
-                output_vis = self.vis_images(batch, gt_nocs, nocs, pred_nocs*mask_resized.unsqueeze(-1), pred_nocs_ori_size*mask.unsqueeze(-1), pred_ego_rot, pred_trans*translation_ratio)
-                for key, value in output_vis.items():
-                    imgs = [np.concatenate([img for img in value],axis=0)]
-                    self.logger.log_image(f'{prex}/{key}', imgs, step=self.global_step)
-        else:
-            if 0 == self.total_val_steps % 1000:
-                output_vis = self.vis_images(batch, gt_nocs, nocs, pred_nocs*mask_resized.unsqueeze(-1), pred_nocs_ori_size*mask.unsqueeze(-1), pred_ego_rot, pred_trans*translation_ratio)
-                for key, value in output_vis.items():
-                    imgs = [np.concatenate([img for img in value],axis=0)]
-                    self.logger.log_image(f'{prex}/{key}', imgs, step=self.global_step)
+            if prex == "train":
+                if 0 == self.trainer.global_step % 50 and (self.trainer.local_rank == 0):
+                    output_vis = self.vis_images(batch, gt_nocs, nocs, pred_nocs*mask_resized.unsqueeze(-1), pred_nocs_ori_size*mask.unsqueeze(-1), pred_ego_rot, pred_trans*translation_ratio)
+                    for key, value in output_vis.items():
+                        imgs = [np.concatenate([img for img in value],axis=0)]
+                        self.logger.log_image(f'{prex}/{key}', imgs, step=self.global_step)
+            else:
+                if 0 == self.total_val_steps % 20:
+                    output_vis = self.vis_images(batch, gt_nocs, nocs, pred_nocs*mask_resized.unsqueeze(-1), pred_nocs_ori_size*mask.unsqueeze(-1), pred_ego_rot, pred_trans*translation_ratio)
+                    for key, value in output_vis.items():
+                        imgs = [np.concatenate([img for img in value],axis=0)]
+                        self.logger.log_image(f'{prex}/{key}', imgs, step=self.global_step)
 
-            self.total_val_steps += 1
+                self.total_val_steps += 1
 
         torch.cuda.empty_cache()
 
@@ -280,6 +281,10 @@ class CustomTrainer(L.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         return self._step(batch, 'val', batch_idx)
+    
+
+    def forward(self, batch):
+        return self._step(batch, 'inference', None, False)
     
     
     def configure_optimizers(self):

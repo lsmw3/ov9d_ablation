@@ -5,112 +5,128 @@ import numpy as np
 from scipy.stats import truncnorm
 from scipy.spatial.transform import Rotation as R
 from dataset.base_dataset import BaseDataset
-from utils.utils import get_2d_coord_np, crop_resize_by_warp_affine, filter_small_edge_obj, get_coarse_mask
+from utils.utils import get_2d_coord_np, crop_resize_by_warp_affine
+import zipfile
 
 
-class oo3d9dmulti(BaseDataset):
-    def __init__(self, data_path, data_name, data_type, feat_3d_path, xyz_bin: int=64, raw_h: int=480, raw_w: int=640,
-                 is_train=True, scale_size=490, num_view=50):
+class objectron(BaseDataset):
+    def __init__(self, data_path, data_name, data_type, feat_3d_path, xyz_bin: int=64,
+                 is_train=True, scale_size=420, num_view=50):
         super().__init__()
 
         self.scale_size = scale_size
-        self.resize = 224
         self.xyz_bin = xyz_bin
 
         self.is_train = is_train
-        self.data_path = os.path.join(data_path, data_type)
+        self.objectron_path = os.path.join(data_path, "objectron_origin")
+        self.omninocs_objectron_path = os.path.join(data_path, "omninocs_release_objectron")
+        self.omninocs_annotation_path = os.path.join(self.omninocs_objectron_path, "seperate_annotation")
+        with open(os.path.join(self.omninocs_objectron_path, "frame_mask_obj_list.json"), 'r') as f:
+            self.omninocs_frame_mask_obj_list = json.load(f)
+
+        # Load zip file
+        self.rgb_data_zip_list = {}
+        for file in os.listdir(self.objectron_path):
+            if file.endswith('.zip'):
+                category_name = file.split('.')[0]
+                self.rgb_data_zip_list[category_name] = zipfile.ZipFile(os.path.join(self.objectron_path, file), 'r')
+        self.omninocs_zip_data = zipfile.ZipFile(os.path.join(self.omninocs_objectron_path, 'objectron.zip'), 'r')
+
         self.data_list = []
-        with open(os.path.join(data_path, 'models_info_with_symmetry.json'), 'r') as f:
-            self.models_info = json.load(f)
-        with open(os.path.join(data_path, 'class_list.json'), 'r') as f:
-            class_list = json.load(f)
-            self.class_dict = {k+1: v for k, v in zip(range(len(class_list)), class_list)}
-        with open(os.path.join(data_path, 'oid2cid.json'), 'r') as f:
-            oid_2_cid = json.load(f)
-        for scene_id in os.listdir(self.data_path):
-            with open(os.path.join(self.data_path, scene_id, 'scene_camera.json'), 'r') as f:
-                scene_camera = json.load(f)
-            with open(os.path.join(self.data_path, scene_id, 'scene_gt.json'), 'r') as f:
-                scene_gt = json.load(f)
-            with open(os.path.join(self.data_path, scene_id, 'scene_gt_info.json'), 'r') as f:
-                scene_gt_info = json.load(f)
 
-            # feat_3d_points = np.load(os.path.join(feat_3d_path, scene_id, "3d_feat.npy"))
+        self.data_path = os.path.join(self.omninocs_objectron_path, f"objectron_{data_type}.json")
 
-            curr_num_view = min(num_view, len(scene_camera.keys()))
-            view_ids = np.array(list(scene_camera.keys()))
-            # np.random.shuffle(view_ids)
-            i = 0
-            for view_id in view_ids:
-                if i >= curr_num_view:
-                    break
-                objects_ids_in_scene = np.arange(len(scene_gt_info[view_id]))
-                for obj_id in objects_ids_in_scene:
-                    if scene_gt_info[view_id][obj_id]['bbox_visib'][2] < 50 or scene_gt_info[view_id][0]['bbox_visib'][3] < 50:
+        with open(self.data_path, "r") as f:
+            self.scene_list = json.load(f)
+        for scene_id in self.scene_list:
+            scene_path = os.path.join(self.omninocs_annotation_path, scene_id)
+            if not os.path.isdir(scene_path):
+                continue
+
+            for object_json in os.listdir(scene_path):
+                object_id = int(object_json.split('.')[0])
+                with open(os.path.join(scene_path, object_json), 'r') as f:
+                    omninocs_annotation_list_of_object = json.load(f)
+                for frame in omninocs_annotation_list_of_object:
+                    if object_id not in self.omninocs_frame_mask_obj_list.get(frame["image_name"], []):
                         continue
-                    if filter_small_edge_obj(scene_gt_info[view_id][obj_id]['bbox_visib'], raw_w, raw_h):
-                        continue
+                    # feat_3d_points = np.load(os.path.join(feat_3d_path, scene_id, "3d_feat.npy"))
                     self.data_list.append(
                         {
                             'scene': scene_id,
-                            'view': f'{int(view_id):{0}{6}}',
-                            'object_in_scene': f'{int(obj_id):{0}{6}}',
-                            'cam': scene_camera[view_id],
-                            'gt': scene_gt[view_id][obj_id],
-                            'gt_info': scene_gt_info[view_id][obj_id],
-                            'meta': self.models_info[str(scene_gt[view_id][obj_id]["obj_id"])],
-                            'class_id': oid_2_cid[str(scene_gt[view_id][obj_id]["obj_id"])]
+                            'annotation': frame,
+                            'object_id': object_id
                             # '3d_feat': feat_3d_points # (1024, 387)
                         }
                     )
-                i += 1
         
         phase = 'train' if is_train else 'test'
-        print("Dataset: OmniObject3D Render")
+        print("Dataset: OmniNOCS Objectron")
         print("# of %s images: %d" % (phase, len(self.data_list)))
 
     def __len__(self):
         return len(self.data_list)
 
     def __getitem__(self, idx):
-        info = self.data_list[idx]
+        frame_info = self.data_list[idx]
         # scene, view, cam, gt, gt_info, meta, feat_3d = info['scene'], info['view'], info['cam'], info['gt'], info['gt_info'], info['meta'], info['3d_feat']
-        scene, view, obj_in_scene, cam, gt, gt_info, meta, class_id = info['scene'], info['view'], info['object_in_scene'], info['cam'], info['gt'], info['gt_info'], info['meta'], info['class_id']
+        frame_annotation = frame_info['annotation']
+        category_name = frame_annotation['image_name'].split('/')[0]
 
-        cam_K = np.asarray(cam['cam_K']).reshape(3, 3)
-        cam_R_m2c, cam_t_m2c, obj_id = gt['cam_R_m2c'], gt['cam_t_m2c'], gt['obj_id']
+        cam_K = [
+            frame_annotation["intrinsics"]["fx"], 0.0, frame_annotation["intrinsics"]["cx"],
+            0.0, frame_annotation["intrinsics"]["fy"], frame_annotation["intrinsics"]["cy"],
+            0.0, 0.0, 1.0
+        ]
+        cam_K = np.asarray(cam_K).reshape(3, 3)
+
+        object_annotation = {}
+        for object in frame_annotation['objects']:
+            if object["object_id"] == frame_info["object_id"]:
+                object_annotation = object
+                break
+        
+
+        cam_R_m2c, cam_t_m2c, obj_id = object_annotation['rotation'], object_annotation['translation'], object_annotation['object_id']
         cam_R_m2c = np.asarray(cam_R_m2c).reshape(3, 3)
         cam_t_m2c = np.asarray(cam_t_m2c).reshape(1, 1, 3)
-        kps3d = self.get_keypoints(meta) # key points in 3d model frame
-        diag = np.linalg.norm(kps3d[0, 1] - kps3d[0, 8])
-        kp_i = (kps3d @ cam_R_m2c.T + cam_t_m2c) @ cam_K.T # n * 9 * 3, key points on 2d pixel plane
-        obj_z_gt = kp_i[0, 0, 2] # depth of model centroid in camera frame
-        kp_i = kp_i[..., 0:2] / kp_i[..., 2:] # n * 9 * 2, homogeneous 2d key points coordinates
-        obj_centroid_2d = kp_i[0, 0, :2]
+        keypoints3d = self.get_keypoints(object_annotation) # key points in 3d model frame
 
-        bbox = gt_info['bbox_visib']
+        diag = np.linalg.norm(keypoints3d[0, 1] - keypoints3d[0, 8])
+        keypoints_2d = (keypoints3d @ cam_R_m2c.T + cam_t_m2c) @ cam_K.T # n * 9 * 3, key points on 2d pixel plane
+        obj_z_gt = keypoints_2d[0, 0, 2] # depth of model centroid in camera frame
+        keypoints_2d = keypoints_2d[..., 0:2] / keypoints_2d[..., 2:] # n * 9 * 2, homogeneous 2d key points coordinates
+        obj_centroid_2d = keypoints_2d[0, 0, :2]
 
-        rgb_path = os.path.join(self.data_path, scene, 'rgb', view+'.png')
-        if not os.path.exists(rgb_path):
-            rgb_path = os.path.join(self.data_path, scene, 'rgb', view+'.jpg')
-        depth_path = os.path.join(self.data_path, scene, 'depth', view+'.png')
-        mask_path = os.path.join(self.data_path, scene, 'mask_visib', '_'.join([view, obj_in_scene])+'.png')
+        bbox = [np.min(keypoints_2d[0, :, 0]), np.min(keypoints_2d[0, :, 1]), 
+                np.max(keypoints_2d[0, :, 0])-np.min(keypoints_2d[0, :, 0]),
+                np.max(keypoints_2d[0, :, 1])-np.min(keypoints_2d[0, :, 1])]
 
-        image = cv2.imread(rgb_path)
-        H, W = image.shape[:2] # 480, 640
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        rgb_path = frame_annotation["image_name"] + '.png'
+        
+        mask_path = frame_annotation["omninocs_name"] + '_instances.png'
+        nocs_path = frame_annotation["omninocs_name"] + '_nocs.png'
+
+        with self.rgb_data_zip_list[category_name].open(rgb_path) as rgb_file:
+            image = np.frombuffer(rgb_file.read(), np.uint8)
+            image = cv2.imdecode(image, cv2.IMREAD_COLOR)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         raw_image = image.copy()
-        depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
-        pcl_c = self.K_dpt2cld(depth, 1/cam['depth_scale'], cam_K) # points in camera frame
-        pcl_m = (pcl_c - cam_t_m2c).dot(cam_R_m2c) # points in model frame
-        mask = cv2.imread(mask_path)
+        
+        with self.omninocs_zip_data.open(mask_path) as mask_file:
+            mask = np.frombuffer(mask_file.read(), np.uint8)
+            mask = cv2.imdecode(mask, cv2.IMREAD_UNCHANGED)
+
+        with self.omninocs_zip_data.open(nocs_path) as nocs_file:
+            nocs_image = np.frombuffer(nocs_file.read(), np.uint8)
+            nocs_image = cv2.imdecode(nocs_image, cv2.IMREAD_COLOR).astype(np.float32) / 255.0
 
         # vis_img = draw_3d_bbox_with_coordinate_frame(image, kps3d[0], cam_R_m2c, cam_t_m2c.reshape(-1), cam_K)
-
-        image[mask != 255] = 0 # remove background
+        image[mask != frame_info["object_id"]] = 0 # remove background
 
         if self.is_train:
-            c, s = self.xywh2cs_dzi(bbox, wh_max=self.scale_size)
+            # c, s = self.xywh2cs_dzi(bbox, wh_max=self.scale_size)
+            c, s = self.xywh2cs(bbox, wh_max=self.scale_size)
         else:
             c, s = self.xywh2cs(bbox, wh_max=self.scale_size)
 
@@ -121,12 +137,12 @@ class oo3d9dmulti(BaseDataset):
         interpolate = cv2.INTER_NEAREST
         # interpolate = cv2.INTER_LINEAR
         rgb, c_h_, c_w_, s_, roi_coord_2d = self.zoom_in_v2(image, c, s, res=self.scale_size, return_roi_coord=True) # center-cropped rgb
-        pcl_m, *_ = self.zoom_in_v2(pcl_m.astype(np.float32), c, s, res=self.scale_size, interpolate=interpolate) # center-cropped point cloud in model frame, (480, 480, 3)
+        
         mask, *_ = self.zoom_in_v2(mask, c, s, res=self.scale_size, interpolate=interpolate) # center-cropped mask
-        mask = mask[..., 0] >= 250
+        mask = (mask == frame_info["object_id"])
         rgb[mask[:, :, None] != [True, True, True]] = 0 # further align the background, especially in case the cropped rgb is outside the boundary of raw image
-        center = (kps3d[0, 1] + kps3d[0, 8]) / 2 # seems this is the true center of the objects in 3d model frame (actually same as kps3d[0, 0])
-        nocs = (pcl_m - center.reshape(1, 1, 3)) / diag + 0.5
+     
+        nocs, *_ = self.zoom_in_v2(nocs_image, c, s, res=self.scale_size, interpolate=interpolate) 
 
         # label each x, y, z channel into intergers between [0, bin-1], and the bg is bin
         nocs_x, nocs_y, nocs_z = nocs[:, :, 0], nocs[:, :, 1], nocs[:, :, 2]
@@ -142,30 +158,18 @@ class oo3d9dmulti(BaseDataset):
         gt_xyz_bin = np.stack([gt_x_bin, gt_y_bin, gt_z_bin], axis=0) # (3, 480, 480)
 
         nocs[np.logical_not(mask)] = 0
-        nocs_resized = np.stack([cv2.resize(nocs[..., i], (self.scale_size//14, self.scale_size//14), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
         mask[np.sum(np.logical_or(nocs > 1, nocs < 0), axis=-1) != 0] = False
-        mask_resized = get_coarse_mask(mask, scale_factor=(1 / 14))
-        # rgb_resized = np.stack([cv2.resize(rgb[..., i], (self.resize, self.resize), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
-        # mask_rgb_resized = get_coarse_mask(mask, scale_factor=(self.resize / self.scale_size))
-        # rgb_resized[mask_rgb_resized[:, :, None] != [True, True, True]] = 0
-        nocs_resized[np.logical_not(mask_resized)] = 0
-
         c = np.array([c_w_, c_h_])
         s = s_
-        kp_i = (kp_i - c.reshape(1, 1, 2)) / s  # * self.scale_size
-
-        gt_coord_x = np.arange(W)
-        gt_coord_y = np.arange(H)
-        gt_coord_xy = np.asarray(np.meshgrid(gt_coord_x, gt_coord_y)).transpose(1, 2 ,0)
-        gt_coord_2d = crop_resize_by_warp_affine(gt_coord_xy, c, s, self.scale_size, interpolation=cv2.INTER_NEAREST).astype(np.float32) # HWC
+        keypoints_2d = (keypoints_2d - c.reshape(1, 1, 2)) / s  # * self.scale_size
         
         dis_sym = np.zeros((3, 4, 4))
-        if 'symmetries_discrete' in self.models_info[f'{obj_id}']:
-            mats = np.asarray([np.asarray(mat_list).reshape(4, 4) for mat_list in self.models_info[f'{obj_id}']['symmetries_discrete']])
+        if 'symmetries_discrete' in object_annotation:
+            mats = np.asarray([np.asarray(mat_list).reshape(4, 4) for mat_list in object_annotation['symmetries_discrete']])
             dis_sym[:mats.shape[0]] = mats
         con_sym = np.zeros((3, 6))
-        if 'symmetries_continuous' in self.models_info[f'{obj_id}']:
-            for i, ao in enumerate(self.models_info[f'{obj_id}']['symmetries_continuous']):
+        if 'symmetries_continuous' in object_annotation:
+            for i, ao in enumerate(object_annotation['symmetries_continuous']):
                 axis = np.asarray(ao['axis'])
                 offset = np.asarray(ao['offset'])
                 con_sym[i] = np.concatenate([axis, offset])
@@ -175,32 +179,23 @@ class oo3d9dmulti(BaseDataset):
 
         out_dict = {
             'raw_scene': raw_image.transpose((2, 0, 1)), # (3, H, W), dtype = np.uint8
-            'image': (rgb.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 490, 490)
-            # 'input_image': (rgb_resized.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 224, 224)
+            'image': (rgb.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 480, 480)
             'gt_xyz_bin': gt_xyz_bin, # (3, H, W), dtype = np.uint8
-            'gt_coord_2d': gt_coord_2d.astype(np.float32), # (490, 490, 2)
             'bbox_size': s,
             'bbox_center': c,
-            'roi_coord_2d': roi_coord_2d.astype(np.float32), # (2, 490, 490)
+            'roi_coord_2d': roi_coord_2d.astype(np.float32), # (2, 480, 480)
             'gt_r': cam_R_m2c.astype(np.float32),
             'gt_t': cam_t_m2c.reshape(-1).astype(np.float32),
             'cam': cam_K.astype(np.float32),
             'resize_ratio': np.array([self.scale_size / s], dtype=np.float32),
             'gt_trans_ratio': trans_ratio.reshape(-1).astype(np.float32),
-            'mask': mask, # (490, 490)
-            'mask_resized': mask_resized, # (32, 32)
-            'nocs': nocs.transpose((2, 0, 1)).astype(np.float32), # (3, 490, 490)
-            'nocs_resized': nocs_resized.transpose((2, 0, 1)).astype(np.float32), # (3, 32, 32)
+            'mask': mask, # (480, 480)
+            'nocs': nocs.transpose((2, 0, 1)).astype(np.float32), # (3, 480, 480)
             # 'kps': kp_i.astype(np.float32),
-            'kps_3d_m': kps3d[0].astype(np.float32), # (9, 3)
-            'kps_3d_center': center.astype(np.float32), # (3)
-            'kps_3d_dig': np.array([diag], dtype=np.float32),
+            'kps_3d_m': keypoints3d[0].astype(np.float32), # (9, 3)
             'dis_sym': dis_sym.astype(np.float32),
             'con_sym': con_sym.astype(np.float32),
-            # 'filename': '-'.join([scene, view]),
-            # 'class_id': class_id,
-            # 'obj_id': obj_id,
-            # 'pcl_model': pcl_m.astype(np.float32), # (490, 490, 3)
+            'class_name': category_name,
             # '3d_feat': feat_3d.astype(np.float32) # (1024, 387)
         }
 
@@ -223,23 +218,24 @@ class oo3d9dmulti(BaseDataset):
         return out_dict
 
     @staticmethod
-    def get_keypoints(model_info, dt=5):
-        mins = [model_info['min_x'], model_info['min_y'], model_info['min_z']]
-        sizes = [model_info['size_x'], model_info['size_y'], model_info['size_z']]
-        maxs = [mins[i]+sizes[i] for i in range(len(mins))]
-        base = [c.reshape(-1) for c in np.meshgrid(*zip(mins, maxs), indexing='ij')]
-        base = np.stack(base, axis=-1) # 8 corners of the 3d bounding box of the object
-        centroid = np.mean(base, axis=0, keepdims=True) # center of the 3d bounding box
-        base = np.concatenate([centroid, base], axis=0)
-        keypoints = [base]
-        if 'symmetries_discrete' in model_info:
-            mats = [np.asarray(mat_list).reshape(4, 4) for mat_list in model_info['symmetries_discrete']]
+    def get_keypoints(object_annotation, dt=5):
+        size = object_annotation["size"]
+
+        # Define 3D bounding box in object space
+        l, w, h = size[0] / 2, size[1] / 2, size[2] / 2
+        keypoints = np.array([
+            [0.0, 0.0, 0.0], [-l, -w, -h], [-l, -w, h], [-l, w, -h], [-l, w, h],  
+            [l, -w, -h], [l, -w, h], [l, w, -h], [l, w, h]      
+        ])
+        keypoints = [keypoints]
+        if 'symmetries_discrete' in object_annotation:
+            mats = [np.asarray(mat_list).reshape(4, 4) for mat_list in object_annotation['symmetries_discrete']]
             for mat in mats:
                 curr = keypoints[0] @ mat[0:3, 0:3].T + mat[0:3, 3:].T
                 keypoints.append(curr)
-        elif 'symmetries_continuous' in model_info:
+        elif 'symmetries_continuous' in object_annotation:
             # todo: consider multiple symmetries
-            ao = model_info['symmetries_continuous'][0]
+            ao = object_annotation['symmetries_continuous'][0]
             axis = np.asarray(ao['axis'])
             offset = np.asarray(ao['offset'])
             angles = np.deg2rad(np.arange(dt, 180, dt))
@@ -322,7 +318,7 @@ class oo3d9dmulti(BaseDataset):
         return center, wh
 
     @staticmethod
-    def xywh2cs(xywh, base_ratio=1.5, wh_max=480):
+    def xywh2cs(xywh, base_ratio=1.1, wh_max=480):
         x, y, w, h = xywh
         center = np.array((x+0.5*w, y+0.5*h)) # [c_w, c_h]
         wh = max(w, h) * base_ratio

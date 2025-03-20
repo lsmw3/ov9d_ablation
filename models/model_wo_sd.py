@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import torchvision
 from torchvision import transforms
 
-from .modules import MLP_3D_POS, FeatureDownsampler, ResidualAttentionBlock, DropBlock2D, LinearScheduler, Featup
+from .modules import MLP_3D_POS, FeatureDownsampler, ResidualAttentionBlock, DropBlock2D, LinearScheduler
 from .retrieval_attention import ViewTransformer
 from utils.pose_utils import quat2mat_torch, ortho6d_to_mat_batch
 
@@ -99,14 +99,14 @@ class OV9D(nn.Module):
         self.embed_dim = embed_dim
         self.dino_dim = dino_dim
         
-        class_embeddings = torch.load(os.path.join(args.data_path, f'oo3d9dsingle_class_embeddings.pth'))
-        self.register_buffer('class_embeddings', class_embeddings)
-        self.gamma = nn.Parameter(torch.ones(text_dim) * 1e-4)
-        self.cls_fc = nn.Sequential(
-                nn.Linear(text_dim, text_dim),
-                nn.GELU(),
-                nn.Linear(text_dim, text_dim)
-            )
+        # class_embeddings = torch.load(os.path.join(args.data_path, f'oo3d9dsingle_class_embeddings.pth'))
+        # self.register_buffer('class_embeddings', class_embeddings)
+        # self.gamma = nn.Parameter(torch.ones(text_dim) * 1e-4)
+        # self.cls_fc = nn.Sequential(
+        #         nn.Linear(text_dim, text_dim),
+        #         nn.GELU(),
+        #         nn.Linear(text_dim, text_dim)
+        #     )
         
         # self.feat_2d_downsample = FeatureDownsampler(device='cuda', dtype=torch.float32, emb_feat=3, width=pos_dim+dino_dim)
         # self.feat_3d_mlp = MLP_3D_POS(device='cuda', dtype=torch.float32, in_feature=3, width=pos_dim)
@@ -136,11 +136,10 @@ class OV9D(nn.Module):
 
         # )
         
-        self.last_layers = nn.Sequential(
-            nn.Linear(embed_dim, embed_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(embed_dim, embed_dim),
-            nn.ReLU(inplace=True),)
+        # self.last_layers = nn.Sequential(
+        #     nn.Linear(3, embed_dim),
+        #     nn.ReLU(inplace=True),
+        #     nn.Linear(embed_dim, embed_dim))
         # for m in self.last_conv.modules():
         #     if isinstance(m, nn.Conv2d):
         #         normal_init(m, std=0.001, bias=0)
@@ -163,7 +162,7 @@ class OV9D(nn.Module):
         self.pnp_net = ConvPnPNet(nIn=pnp_cin, rot_dim=args.rot_dim)
 
 
-    def forward(self, x, feat_2d_bp, mask, roi_coord_2d, class_ids=None):    
+    def forward(self, x, mask, roi_coord_2d):    
         # import pdb; pdb.set_trace() 
         b, c, h, w = x.shape # (b, 3, h, w)
         # n, d = feat_3d.shape # (1024, 387)
@@ -237,8 +236,10 @@ class OV9D(nn.Module):
         # else:
         #     out_nocs_feat = torch.cat([out_x, out_y, out_z], dim=1) # (b, 3, h, w)
         
+        
         # out_nocs_feat = F.interpolate(out_nocs_feat, size=(h, w), mode="bicubic", align_corners=True) if self.args.low_res_sup else out_nocs_feat
         out_nocs_feat = out_feat_up
+        # out_nocs_feat = self.last_layers(out_feat_up.reshape(b, 3, -1).permute(0, 2, 1)).permute(0, 2, 1).reshape(b, -1, h, w)
 
         # out_nocs = torch.cat([out_x, out_y, out_z], dim=1) # (b, bin*3, h, w) or (b, 3, h, w)
         out_nocs = out
@@ -255,7 +256,7 @@ class OV9D(nn.Module):
         out_feat_offset = None
         out_dict = {'pred_nocs_feat': out_nocs, 'pred_nocs_offset': out_feat_offset, 'pred_r': pred_rot_m, 'pred_t': pred_t_}
         if self.args.low_res_sup:
-            out_dict.update({'pred_nocs_ori_size': out_nocs_feat})
+            out_dict.update({'pred_nocs_ori_size': out_feat_up})
 
         return out_dict
     
