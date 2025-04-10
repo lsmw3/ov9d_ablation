@@ -26,6 +26,7 @@ class TrainOptions(BaseOptions):
         # experiment configs
         parser.add_argument('--epochs',      type=int,   default=25)
         parser.add_argument('--lr',          type=float, default=1e-4)
+        parser.add_argument('--min_lr',          type=float, default=1e-4)
         parser.add_argument('--weight_decay',          type=float, default=5e-2)
         parser.add_argument('--layer_decay',          type=float, default=0.9)
         

@@ -54,13 +54,13 @@ def rot_l2_loss(m1, m2):
 
 def L1_reg_nocs_loss(bs, pred_nocs, gt_nocs, mask, dis_sym, con_sym, loss_criterion):
     for b in range(bs):
-        curr_pred_nocs = pred_nocs[b]  # (480, 480, 3)
-        curr_gt_nocs = gt_nocs[b]  # (480, 480, 3)
-        curr_mask = mask[b]  # (480, 480)
+        curr_pred_nocs = pred_nocs[b] # (35, 35, 3)
+        curr_gt_nocs = gt_nocs[b] # (35, 35, 3)
+        curr_mask = mask[b] # (35, 35)
         
         # Extract masked regions for symmetry handling
-        curr_pred_nocs_model_flat = curr_pred_nocs[curr_mask]  # (N, 3) where N is number of masked pixels
-        curr_gt_nocs_model_flat = curr_gt_nocs[curr_mask]  # (N, 3)
+        curr_pred_nocs_model_flat = curr_pred_nocs[curr_mask] # (N, 3) where N is number of masked pixels
+        curr_gt_nocs_model_flat = curr_gt_nocs[curr_mask] # (N, 3)
         
         # Convert NOCS to point cloud for symmetry handling
         curr_pcl_m = curr_gt_nocs_model_flat - 0.5  # NOCS to PCL

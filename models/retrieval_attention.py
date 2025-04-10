@@ -41,7 +41,7 @@ class ViewEncoderLayer(nn.Module):
         # feed-forward network with zero initialization
         self.mlp = nn.Sequential(
             nn.Linear(d_model * 2, d_model * 2, bias=False),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.1, inplace=True),
             nn.Linear(d_model * 2, d_model, bias=False),
         )
 
@@ -124,7 +124,7 @@ class ViewTransformer(nn.Module):
         # if config["final_proj"]:
         #     self.final_proj = nn.Linear(config["d_model"], config["d_model"], bias=True)
 
-        self._reset_parameters()
+        # self._reset_parameters()
 
     def _reset_parameters(self):
         for para in self.parameters():

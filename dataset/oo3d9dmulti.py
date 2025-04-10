@@ -50,19 +50,21 @@ class oo3d9dmulti(BaseDataset):
                         continue
                     if filter_small_edge_obj(scene_gt_info[view_id][obj_id]['bbox_visib'], raw_w, raw_h):
                         continue
-                    self.data_list.append(
-                        {
-                            'scene': scene_id,
-                            'view': f'{int(view_id):{0}{6}}',
-                            'object_in_scene': f'{int(obj_id):{0}{6}}',
-                            'cam': scene_camera[view_id],
-                            'gt': scene_gt[view_id][obj_id],
-                            'gt_info': scene_gt_info[view_id][obj_id],
-                            'meta': self.models_info[str(scene_gt[view_id][obj_id]["obj_id"])],
-                            'class_id': oid_2_cid[str(scene_gt[view_id][obj_id]["obj_id"])]
-                            # '3d_feat': feat_3d_points # (1024, 387)
-                        }
-                    )
+                    info_dict = {
+                        'scene': scene_id,
+                        'view': f'{int(view_id):{0}{6}}',
+                        'object_in_scene': f'{int(obj_id):{0}{6}}',
+                        'cam': scene_camera[view_id],
+                        'gt': scene_gt[view_id][obj_id],
+                        'gt_info': scene_gt_info[view_id][obj_id],
+                        'meta': self.models_info[str(scene_gt[view_id][obj_id]["obj_id"])],
+                        'class_id': oid_2_cid[str(scene_gt[view_id][obj_id]["obj_id"])]
+                        # '3d_feat': feat_3d_points # (1024, 387
+                    }
+                    if self.check_mask(info_dict):
+                        self.data_list.append(info_dict)
+                    else:
+                        continue
                 i += 1
         
         phase = 'train' if is_train else 'test'
@@ -110,7 +112,7 @@ class oo3d9dmulti(BaseDataset):
         image[mask != 255] = 0 # remove background
 
         if self.is_train:
-            c, s = self.xywh2cs_dzi(bbox, wh_max=self.scale_size)
+            c, s = self.xywh2cs(bbox, wh_max=self.scale_size)
         else:
             c, s = self.xywh2cs(bbox, wh_max=self.scale_size)
 
@@ -221,6 +223,24 @@ class oo3d9dmulti(BaseDataset):
         #     out_dict.update(extra_gt)
 
         return out_dict
+    
+    def check_mask(self, info):
+        scene, view, obj_in_scene, gt_info = info['scene'], info['view'], info['object_in_scene'], info['gt_info']
+        
+        mask_path = os.path.join(self.data_path, scene, 'mask_visib', '_'.join([view, obj_in_scene])+'.png')
+        mask = cv2.imread(mask_path)
+
+        bbox = gt_info['bbox_visib']
+        c, s = self.xywh2cs(bbox, wh_max=self.scale_size)
+
+        mask, *_ = self.zoom_in_v2(mask, c, s, res=self.scale_size, interpolate=cv2.INTER_NEAREST)
+        mask = mask[..., 0] >= 250
+        mask_resized = get_coarse_mask(mask, scale_factor=(1 / 14))
+
+        if mask_resized.sum() < 32:
+            return False
+        else:
+            return True
 
     @staticmethod
     def get_keypoints(model_info, dt=5):

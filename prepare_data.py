@@ -5,11 +5,11 @@ import random
 
 os.chdir('ov9d')
 
-main_folder = "oo3d9dmulti"
+main_folder = "train_multi"
 
-train_dir = Path('train_multi')
+train_dir = Path('train_multi_mini')
 train_dir.mkdir(parents=True, exist_ok=True)
-test_dir = Path('test_multi')
+test_dir = Path('test_multi_mini')
 test_dir.mkdir(parents=True, exist_ok=True)
 # single = Path('oo3d9dsingle')
 
@@ -37,15 +37,15 @@ subfolders = [f for f in os.listdir(main_folder) if os.path.isdir(os.path.join(m
 random.shuffle(subfolders)
 
 # Split into train (80%) and test (20%)
-split_idx = int(len(subfolders) * 0.8)
+split_idx = int(len(subfolders) * 0.1)
 train_subfolders = subfolders[:split_idx]
 test_subfolders = subfolders[split_idx:]
 
 # Move subfolders to train and test directories
 for folder in train_subfolders:
-    shutil.move(os.path.join(main_folder, folder), os.path.join(train_dir, folder))
+    shutil.copytree(os.path.join(main_folder, folder), os.path.join(train_dir, folder))
 
-for folder in test_subfolders:
-    shutil.move(os.path.join(main_folder, folder), os.path.join(test_dir, folder))
+# for folder in test_subfolders:
+#     shutil.move(os.path.join(main_folder, folder), os.path.join(test_dir, folder))
 
 print(f"Moved {len(train_subfolders)} folders to train and {len(test_subfolders)} folders to test.")
