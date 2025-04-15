@@ -1,6 +1,7 @@
 from typing import Dict
 import os
 import re
+import cv2
 import math
 import json
 import numpy as np
@@ -426,7 +427,7 @@ class CustomTrainer(L.LightningModule):
         pred_nocs = pred_nocs_vis.detach().cpu().numpy()
         pred_nocs_ori_size = pred_nocs_ori_size_vis.detach().cpu().numpy()
 
-        raw_scene = batch['raw_scene'].permute(0, 2, 3, 1).detach().cpu().numpy() # (b, 480, 640, 3), np.uint8
+        # raw_scene = batch['raw_scene'].permute(0, 2, 3, 1).detach().cpu().numpy() # (b, 480, 640, 3), np.uint8
         kps_3d_m = batch['kps_3d_m'].detach().cpu().numpy() # (B, 9, 3)
         cams = batch['cam'].detach().cpu().numpy()
 
@@ -441,8 +442,26 @@ class CustomTrainer(L.LightningModule):
         kpts_m[:, [1, 2, 5, 6], 1], kpts_m[:, [3, 4, 7, 8], 1] = -w/2, w/2
         kpts_m[:, [1, 3, 5, 7], 2], kpts_m[:, [2, 4, 6, 8], 2] = -h/2, h/2
 
-        gt_pose = self.vis_pose_on_img(raw_scene, kps_3d_m, cams, gt_r, gt_t)
-        pred_pose = self.vis_pose_on_img(raw_scene, kpts_m, cams, pred_r, pred_t)
+        # gt_pose = self.vis_pose_on_img(raw_scene, kps_3d_m, cams, gt_r, gt_t)
+        # pred_pose = self.vis_pose_on_img(raw_scene, kpts_m, cams, pred_r, pred_t)
+
+        if isinstance(batch['raw_scene'], torch.Tensor):
+            raw_scene = batch['raw_scene'].permute(0, 2, 3, 1).detach().cpu().numpy() # (b, 480, 640, 3), np.uint8
+            gt_pose = self.vis_pose_on_img(raw_scene, kps_3d_m, cams, gt_r, gt_t)
+            pred_pose = self.vis_pose_on_img(raw_scene, kpts_m, cams, pred_r, pred_t)
+        else:
+            assert isinstance(batch['raw_scene'], list)
+            gt_pose_list, pred_pose_list = [], []
+            raw_scene = batch['raw_scene']
+            for i in range(B):
+                gt_pose_single = self.vis_pose_on_img(raw_scene[i].permute(1, 2, 0).unsqueeze(0).detach().cpu().numpy(), kps_3d_m[i][None], cams[i][None], gt_r[i][None], gt_t[i][None])[0]
+                pred_pose_single = self.vis_pose_on_img(raw_scene[i].permute(1, 2, 0).unsqueeze(0).detach().cpu().numpy(), kpts_m[i][None], cams[i][None], pred_r[i][None], pred_t[i][None])[0]
+
+                gt_pose_list.append(cv2.resize(gt_pose_single, (1440, 1440), cv2.INTER_LINEAR))
+                pred_pose_list.append(cv2.resize(pred_pose_single, (1440, 1440), cv2.INTER_LINEAR))
+
+            gt_pose = np.array(gt_pose_list)
+            pred_pose = np.array(pred_pose_list)
 
         outputs.update({"gt rgb":gt_rgb, "gt nocs":gt_nocs, "gt nocs ori": nocs_ori, "pred nocs":pred_nocs, "pred nocs ori": pred_nocs_ori_size, "mask": mask, "nocs mask": nocs_mask, "gt pose":gt_pose, "pred pose":pred_pose})
 
@@ -456,8 +475,6 @@ class CustomTrainer(L.LightningModule):
         B, C, H, W = batch['image'].shape
 
         gt_rgb = batch['image'].permute(0, 2, 3, 1).detach().cpu().numpy()
-
-        raw_scene = batch['raw_scene'].permute(0, 2, 3, 1).detach().cpu().numpy() # (b, 480, 640, 3), np.uint8
         kps_3d_m = batch['kps_3d_m'].detach().cpu().numpy() # (B, 9, 3)
         cams = batch['cam'].detach().cpu().numpy()
 
@@ -466,13 +483,29 @@ class CustomTrainer(L.LightningModule):
         pred_r = pred_ego_rot.detach().cpu().numpy()
         pred_t = pred_trans.detach().cpu().numpy()
 
-        gt_pose = self.vis_pose_on_img(raw_scene, kps_3d_m, cams, gt_r, gt_t)
         kpts_m = np.zeros([B, 9, 3]).astype(np.float32)
         l, w, h = pred_dims[:, 0].unsqueeze(1).detach().cpu().numpy(), pred_dims[:, 1].unsqueeze(1).detach().cpu().numpy(), pred_dims[:, 2].unsqueeze(1).detach().cpu().numpy()
         kpts_m[:, [1, 2, 3, 4], 0], kpts_m[:, [5, 6, 7, 8], 0] = -l/2, l/2
         kpts_m[:, [1, 2, 5, 6], 1], kpts_m[:, [3, 4, 7, 8], 1] = -w/2, w/2
         kpts_m[:, [1, 3, 5, 7], 2], kpts_m[:, [2, 4, 6, 8], 2] = -h/2, h/2
-        pred_pose = self.vis_pose_on_img(raw_scene, kpts_m, cams, pred_r, pred_t)
+
+        if isinstance(batch['raw_scene'], torch.Tensor):
+            raw_scene = batch['raw_scene'].permute(0, 2, 3, 1).detach().cpu().numpy() # (b, 480, 640, 3), np.uint8
+            gt_pose = self.vis_pose_on_img(raw_scene, kps_3d_m, cams, gt_r, gt_t)
+            pred_pose = self.vis_pose_on_img(raw_scene, kpts_m, cams, pred_r, pred_t)
+        else:
+            assert isinstance(batch['raw_scene'], list)
+            gt_pose_list, pred_pose_list = [], []
+            raw_scene = batch['raw_scene']
+            for i in range(B):
+                gt_pose_single = self.vis_pose_on_img(raw_scene[i].permute(1, 2, 0).unsqueeze(0).detach().cpu().numpy(), kps_3d_m[i][None], cams[i][None], gt_r[i][None], gt_t[i][None])[0]
+                pred_pose_single = self.vis_pose_on_img(raw_scene[i].permute(1, 2, 0).unsqueeze(0).detach().cpu().numpy(), kpts_m[i][None], cams[i][None], pred_r[i][None], pred_t[i][None])[0]
+
+                gt_pose_list.append(cv2.resize(gt_pose_single, (1440, 1440), cv2.INTER_LINEAR))
+                pred_pose_list.append(cv2.resize(pred_pose_single, (1440, 1440), cv2.INTER_LINEAR))
+
+            gt_pose = np.array(gt_pose_list)
+            pred_pose = np.array(pred_pose_list)
 
         outputs.update({"gt rgb":gt_rgb, "gt pose":gt_pose, "pred pose":pred_pose})
 

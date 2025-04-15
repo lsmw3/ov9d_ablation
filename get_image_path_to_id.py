@@ -24,7 +24,8 @@ for image in data['images']:
     
     # 构造新的路径格式，假设 "batch-0" 是批次编号， "frame000216" 是帧号
     batch = f"batch-{int(parts[2])}"  # parts[2] 是 batch 数字
-    frame = f"frame{int(parts[3]):06d}"  # parts[3] 是帧号，例如 "0000000" -> "000216"
+    frame_number = parts[4].split('.')[0]
+    frame = f"frame{int(frame_number):06d}"  # parts[3] 是帧号，例如 "0000000" -> "000216"
     
     # 创建新的路径格式
     new_path = f"{parts[0]}/{batch}/{parts[3]}/{frame}"
@@ -32,6 +33,7 @@ for image in data['images']:
 
     # 将新的路径和图片 ID 存储在字典中
     image_map[new_path] = image['id']
+    
 
 # 输出结果
 print(image_map)

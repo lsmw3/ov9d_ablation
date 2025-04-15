@@ -35,8 +35,6 @@ def main():
         'data_type': args.data_val,
         'feat_3d_path': args.data_3d_feat ,
         'xyz_bin': args.nocs_bin,
-        'raw_w': args.raw_w,
-        'raw_h': args.raw_h,
         'scale_size': args.scale_size
     }
     dataset_kwargs['scale_size'] = args.scale_size
@@ -54,7 +52,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = CustomTrainer(args=args)
-    model = model.load_from_checkpoint("logs/attn_rt/epoch=104.ckpt", args=args)
+    model = model.load_from_checkpoint("logs/nocs_rt/epoch=99.ckpt", args=args)
     model = model.to(device)
     model.eval()
 
@@ -85,9 +83,9 @@ def main():
                             "K": batch["cam"][i].cpu().numpy().tolist(),
                             "width": int(batch["raw_scene"][i].shape[2]),
                             "height": int(batch["raw_scene"][i].shape[1]),
-                            "instance": []
+                            "instances": []
                         }
-                        predictions[str(img_id)]["instance"].append(
+                        predictions[str(img_id)]["instances"].append(
                             {
                                 "image_id": img_id,
                                 "category_id": category_id,
@@ -111,7 +109,7 @@ def main():
                             }
                         )
                     else:
-                        predictions[str(img_id)]["instance"].append(
+                        predictions[str(img_id)]["instances"].append(
                             {
                                 "image_id": img_id,
                                 "category_id": category_id,
@@ -140,7 +138,7 @@ def main():
     for key, value in predictions.items():
         predictions_list.append(value)
 
-    torch.save(predictions_list, "logs/inference_pth/instances_predictions_attn_rt.pth")
+    torch.save(predictions_list, "logs/inference_pth/instances_predictions_nocs_rt.pth")
 
 
 if __name__ == '__main__':

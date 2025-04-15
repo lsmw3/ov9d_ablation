@@ -6,6 +6,7 @@ from datetime import datetime
 
 import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
+from torch.utils.data._utils.collate import default_collate
 import pytorch_lightning as L
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -149,6 +150,19 @@ class NaNGradientSkipper(L.Callback):
             return -1
 
 
+def custom_collate_fn(batch):
+    # Extract the raw scenes directly
+    raw_scenes = [torch.as_tensor(item.pop('raw_scene')) for item in batch]
+    
+    # Handle all other elements with default collation
+    default_collated = default_collate(batch)
+    
+    # Add the raw_scenes back
+    default_collated['raw_scene'] = raw_scenes
+    
+    return default_collated
+
+
 def main():
     wandb.init(project="ov9d")
 
@@ -167,9 +181,7 @@ def main():
         'data_name': args.data_name, 
         'data_type': args.data_train,
         'feat_3d_path': args.data_3d_feat ,
-        'xyz_bin': args.nocs_bin,
-        'raw_w': args.raw_w,
-        'raw_h': args.raw_h
+        'xyz_bin': args.nocs_bin
     }
     dataset_kwargs['scale_size'] = args.scale_size
 
@@ -182,17 +194,32 @@ def main():
 
     sampler_val = RandomSampler(val_dataset) # SequentialSampler(val_dataset)
 
-    train_loader = DataLoader(train_dataset,
-                              batch_size=args.batch_size,
-                              sampler=sampler_train,
-                              num_workers=args.workers,
-                              pin_memory=True,
-                              drop_last=True)
-    val_loader = DataLoader(val_dataset,
-                            batch_size=args.batch_size,
-                            sampler=sampler_val,
-                            num_workers=args.workers,
-                            pin_memory=True)
+    if args.dataset == "arkitscenes":
+        train_loader = DataLoader(train_dataset,
+                                batch_size=args.batch_size,
+                                sampler=sampler_train,
+                                num_workers=args.workers,
+                                pin_memory=True,
+                                drop_last=True,
+                                collate_fn=custom_collate_fn)
+        val_loader = DataLoader(val_dataset,
+                                batch_size=args.batch_size,
+                                sampler=sampler_val,
+                                num_workers=args.workers,
+                                pin_memory=True,
+                                collate_fn=custom_collate_fn)
+    else:
+        train_loader = DataLoader(train_dataset,
+                                batch_size=args.batch_size,
+                                sampler=sampler_train,
+                                num_workers=args.workers,
+                                pin_memory=True,
+                                drop_last=True)
+        val_loader = DataLoader(val_dataset,
+                                batch_size=args.batch_size,
+                                sampler=sampler_val,
+                                num_workers=args.workers,
+                                pin_memory=True)
     
     project_name = "ov9d"
     exp_name = "ov9d_ablation"
@@ -205,12 +232,12 @@ def main():
     # world_size = int(os.getenv('WORLD_SIZE', '1'))
     # strategy = DDPStrategy(find_unused_parameters=True) if world_size > 1 else None
 
-    if args.with_attn and args.decode_rt:
-        ckpt_folder_name = "attn_rt"
-    if args.with_attn and not args.decode_rt:
-        ckpt_folder_name = "nocs_rt"
-    if not args.with_attn and args.decode_rt:
-        ckpt_folder_name = "rt"
+    if args.dataset == "arkitscenes":
+        ckpt_folder_name = "arkitscenes"
+    if args.dataset == "hypersim":
+        ckpt_folder_name = "hypersim"
+    if args.dataset == "objectron":
+        ckpt_folder_name = "objectron"
     checkpoint_callback = ModelCheckpoint(
         dirpath=os.path.join(args.log_dir, ckpt_folder_name),
         filename='{epoch}',

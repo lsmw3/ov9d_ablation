@@ -25,68 +25,6 @@ __DINO_MODEL__ = {
 }
 
 
-def featup_upsampler(backbone, lr_feat, guidance):
-    """
-    Dynamically selects the number of upsampler layers based on guidance image size.
-    
-    Args:
-        backbone: The backbone model containing upsampler layers
-        lr_feat: Low resolution feature map (B, C, H, W)
-        guidance: Guidance image (B, C, H_g, W_g)
-    
-    Returns:
-        hr_feat: Upsampled high resolution feature map
-    """
-    # Get initial dimensions
-    _, _, h, w = lr_feat.shape
-    _, _, guidance_h, guidance_w = guidance.shape
-    
-    # Calculate the maximum possible upscaling factor
-    h_scale = guidance_h / h
-    w_scale = guidance_w / w
-    scale_factor = min(h_scale, w_scale)
-    
-    # Determine how many upsampler layers we can use (max 4)
-    max_layers = min(math.floor(math.log2(scale_factor)), 4)
-    
-    # Initialize feature with input
-    feat = lr_feat
-    
-    if max_layers == 0:
-        # If scale factor is too small, just use up1 with original guidance
-        feat = backbone.model.upsampler.up1(feat, guidance)
-    else:
-        # Initialize lists for multiple layer processing
-        upsamplers = []
-        guidance_maps = []
-        current_h, current_w = h, w
-        
-        # Prepare upsamplers and guidance maps
-        for i in range(max_layers):
-            upsamplers.append(getattr(backbone.model.upsampler, f'up{i+1}'))
-            
-            # Calculate sizes for intermediate guidance maps
-            target_h = current_h * 2
-            target_w = current_w * 2
-            
-            # Use original guidance for last layer, pooled guidance for others
-            if i == max_layers - 1:
-                guidance_maps.append(guidance)
-            else:
-                guidance_maps.append(F.adaptive_avg_pool2d(guidance, (target_h, target_w)))
-            
-            current_h, current_w = target_h, target_w
-        
-        # Apply upsamplers sequentially
-        for i in range(max_layers):
-            feat = upsamplers[i](feat, guidance_maps[i])
-    
-    # Apply final fixup projection
-    hr_feat = backbone.model.upsampler.fixup_proj(feat) * 0.1 + feat
-    
-    return hr_feat
-
-
 def init_weights(m):
     if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
         torch.nn.init.kaiming_normal_(m.weight)

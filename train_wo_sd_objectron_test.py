@@ -19,33 +19,6 @@ import cv2
 from tqdm import tqdm
 
 
-class SaveOnNanCallback(ModelCheckpoint):
-    def __init__(self, dirpath="logs/debugs", filename="nan_detected_{step}"):
-        super().__init__()
-        self.dirpath = dirpath
-        self.filename = filename
-    
-    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        # Check if outputs contain NaN values
-        if outputs is not None:
-            # Assuming outputs is a dictionary with 'loss' key
-            if isinstance(outputs, dict) and 'loss' in outputs:
-                loss = outputs['loss']
-            else:
-                # If outputs is just the loss tensor
-                loss = outputs
-                
-            if trainer.global_step >= 300:
-                if torch.isnan(loss).any():
-                    # NaN detected, save checkpoint
-                    checkpoint_path = f"{self.dirpath}/{self.filename.format(step=trainer.global_step)}.ckpt"
-                    trainer.save_checkpoint(checkpoint_path)
-                    print(f"NaN detected at step {trainer.global_step}. Checkpoint saved to {checkpoint_path}")
-                else:
-                    checkpoint_path = f"logs/steps_before_nan/{self.filename.format(step=trainer.global_step)}.ckpt"
-                    trainer.save_checkpoint(checkpoint_path)
-
-
 def main():
     torch.set_float32_matmul_precision('medium')
     torch.autograd.set_detect_anomaly(True)
@@ -63,8 +36,6 @@ def main():
         'data_type': args.data_train,
         'feat_3d_path': args.data_3d_feat ,
         'xyz_bin': args.nocs_bin,
-        'raw_w': args.raw_w,
-        'raw_h': args.raw_h
     }
     dataset_kwargs['scale_size'] = args.scale_size
 
@@ -109,6 +80,8 @@ def main():
             cv2.line(image, pt1, pt2, colors[i], 3)
 
         return image
+
+    
     import matplotlib.pyplot as plt
     for idx, batch in tqdm(enumerate(train_dataset), total=len(train_dataset), desc="Loading Dataset", unit="batch"):
         # Extract relevant data from batch
@@ -117,6 +90,7 @@ def main():
         bbox_size = batch['bbox_size']  # width/height (scale)
         nocs_image = (batch['nocs'].transpose(1, 2, 0) * 255).astype(np.uint8)  # (H, W, 3)
         rgb_image = (batch['image'].transpose(1, 2, 0) * 255).astype(np.uint8)  # Cropped RGB image
+        mask = (batch['mask']*255.).astype(np.uint8)
         cam_K = batch['cam']  # Camera intrinsics
         cam_R_m2c = batch['gt_r']  # Rotation matrix (3, 3)
         cam_t_m2c = batch['gt_t']  # Translation vector (3,)
@@ -134,24 +108,32 @@ def main():
         # Draw on the cropped RGB image
         rgb_image_with_3d_bbox = draw_3d_bbox_with_axes(raw_image.copy(), keypoints_3d, cam_R_m2c, cam_t_m2c, cam_K)
 
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
 
         # 1. Raw image with 2D bounding box
-        axes[0].imshow(raw_image_with_bbox)
-        axes[0].set_title("Raw Image with 2D BBox")
+        axes[0, 0].imshow(raw_image_with_bbox)
+        axes[0, 0].set_title("Raw Image with 2D BBox")
 
         # 2. Cropped RGB with 3D BBox and Orientation
-        axes[1].imshow(rgb_image_with_3d_bbox)
-        axes[1].set_title("RGB with 3D BBox & Orientation")
+        axes[0, 1].imshow(rgb_image_with_3d_bbox)
+        axes[0, 1].set_title("RGB with 3D BBox & Orientation")
 
         # 3. Cropped NOCS image
-        axes[2].imshow(nocs_image)
-        axes[2].set_title("Cropped NOCS Image")
+        axes[0, 2].imshow(nocs_image)
+        axes[0, 2].set_title("Cropped NOCS Image")
 
-        for ax in axes:
+        axes[1, 0].imshow(rgb_image)
+        axes[1, 0].set_title("Cropped rgb Image")
+
+        axes[1, 1].imshow(mask)
+        axes[1, 1].set_title("Cropped mask")
+
+        axes[1, 2].axis('off')
+
+        for ax in axes.flat:
             ax.axis("off")
 
-        plt.savefig(f"data_visualize/{batch['class_name']}.png", bbox_inches="tight", dpi=300)
+        plt.savefig(f"data_visualize/arkitscenes/{batch['class_name']}.png", bbox_inches="tight", dpi=300)
         plt.close()
 
 
