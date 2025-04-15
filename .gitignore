@@ -22,8 +22,6 @@ gt_nocs.jpg
 pred_nocs.jpg
 point_cloud.pcd
 
-objectron_category_id_to_name.json
-objectron_image_path_to_id.json
 train_wo_sd_objectron.sh
 
 __pycache__/
