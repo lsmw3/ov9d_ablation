@@ -564,7 +564,7 @@ class CustomTrainer(L.LightningModule):
         def lr_lambda(step):
             initial_lr = self.args.lr
             min_lr = self.args.min_lr
-            total_steps = 14000
+            total_steps = 20000
             if step >= total_steps:
                 return min_lr / initial_lr
             return min_lr / initial_lr + (1 - min_lr / initial_lr) * (1 + math.cos(math.pi * step / total_steps)) / 2

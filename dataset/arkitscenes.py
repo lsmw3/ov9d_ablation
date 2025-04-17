@@ -95,170 +95,168 @@ class arkitscenes(BaseDataset):
         return len(self.data_list)
 
     def __getitem__(self, idx):
-        while True:
-            frame_info = self.data_list[idx]
-            # scene, view, cam, gt, gt_info, meta, feat_3d = info['scene'], info['view'], info['cam'], info['gt'], info['gt_info'], info['meta'], info['3d_feat']
-            frame_annotation = frame_info['annotation']
-            assert len(frame_annotation["objects"]) == 1
+        frame_info = self.data_list[idx]
+        # scene, view, cam, gt, gt_info, meta, feat_3d = info['scene'], info['view'], info['cam'], info['gt'], info['gt_info'], info['meta'], info['3d_feat']
+        frame_annotation = frame_info['annotation']
+        assert len(frame_annotation["objects"]) == 1
+
+        category_name = frame_annotation["objects"][0]["category"]
+
+        cam_K = [
+            frame_annotation["intrinsics"]["fx"], 0.0, frame_annotation["intrinsics"]["cx"],
+            0.0, frame_annotation["intrinsics"]["fy"], frame_annotation["intrinsics"]["cy"],
+            0.0, 0.0, 1.0
+        ]
+        cam_K = np.asarray(cam_K).reshape(3, 3)
+
+        # object_annotation = {}
+        # for obj in frame_annotation['objects']:
+        #     if obj["object_id"] == frame_info["object_id"]:
+        #         object_annotation = obj
+        #         break
+
+        assert frame_annotation['objects'][0]["object_id"] == frame_info["object_id"]
+        object_annotation = frame_annotation['objects'][0]
+
+        cam_R_m2c, cam_t_m2c, obj_id = object_annotation['rotation'], object_annotation['translation'], object_annotation['object_id']
+        cam_R_m2c = np.asarray(cam_R_m2c).reshape(3, 3)
+        cam_t_m2c = np.asarray(cam_t_m2c).reshape(1, 1, 3)
+        keypoints3d = self.get_keypoints(object_annotation) # key points in 3d model frame
+
+        diag = np.linalg.norm(keypoints3d[0, 1] - keypoints3d[0, 8])
+        keypoints_2d = (keypoints3d @ cam_R_m2c.T + cam_t_m2c) @ cam_K.T # n * 9 * 3, key points on 2d pixel plane
+        obj_z_gt = keypoints_2d[0, 0, 2] # depth of model centroid in camera frame
+        keypoints_2d = keypoints_2d[..., 0:2] / keypoints_2d[..., 2:] # n * 9 * 2, homogeneous 2d key points coordinates
+        obj_centroid_2d = keypoints_2d[0, 0, :2]
+
+        bbox = [np.min(keypoints_2d[0, :, 0]), np.min(keypoints_2d[0, :, 1]), 
+                np.max(keypoints_2d[0, :, 0])-np.min(keypoints_2d[0, :, 0]),
+                np.max(keypoints_2d[0, :, 1])-np.min(keypoints_2d[0, :, 1])]
+
+        rgb_path = frame_annotation["image_name"]
+        mask_path = frame_annotation["omninocs_name"] + '_instances.png'
+        nocs_path = frame_annotation["omninocs_name"] + '_nocs.png'
+
+        image = cv2.imread(os.path.join(self.arkitscenes_path, rgb_path), cv2.IMREAD_COLOR)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        H, W = image.shape[:2]
+
+        mask_raw = cv2.imread(os.path.join(self.omninocs_arkitscenes_path, mask_path), cv2.IMREAD_UNCHANGED)
+
+        nocs_image_raw = cv2.imread(os.path.join(self.omninocs_arkitscenes_path, nocs_path), cv2.IMREAD_COLOR)
+        nocs_image_raw = cv2.cvtColor(nocs_image_raw, cv2.COLOR_BGR2RGB)
+        nocs_image_raw = nocs_image_raw.astype(np.float32) / 255.0
             
-            category_name = frame_annotation["objects"][0]["category"]
+        # if W != 360:
+        #     pad_width = 360 - W  # Amount of padding needed on the right
+        #     image = np.pad(image, ((0, 0), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
+        #     mask = np.pad(mask, ((0, 0), (0, pad_width)), mode='constant', constant_values=0)
+        #     nocs_image = np.pad(nocs_image, ((0, 0), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
+        #     W = 360
+        raw_image = image.copy()
 
-            cam_K = [
-                frame_annotation["intrinsics"]["fx"], 0.0, frame_annotation["intrinsics"]["cx"],
-                0.0, frame_annotation["intrinsics"]["fy"], frame_annotation["intrinsics"]["cy"],
-                0.0, 0.0, 1.0
-            ]
-            cam_K = np.asarray(cam_K).reshape(3, 3)
+        mask = cv2.resize(mask_raw, (W, H), cv2.INTER_NEAREST)
+        nocs_image = np.stack([cv2.resize(nocs_image_raw[..., i], (W, H), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
 
-            # object_annotation = {}
-            # for obj in frame_annotation['objects']:
-            #     if obj["object_id"] == frame_info["object_id"]:
-            #         object_annotation = obj
-            #         break
+        image[mask != frame_info["object_id"]] = 0 # remove background
 
-            assert frame_annotation['objects'][0]["object_id"] == frame_info["object_id"]
-            object_annotation = frame_annotation['objects'][0]
+        c, s = self.xywh2cs(bbox, wh_max=self.scale_size)
 
-            cam_R_m2c, cam_t_m2c, obj_id = object_annotation['rotation'], object_annotation['translation'], object_annotation['object_id']
-            cam_R_m2c = np.asarray(cam_R_m2c).reshape(3, 3)
-            cam_t_m2c = np.asarray(cam_t_m2c).reshape(1, 1, 3)
-            keypoints3d = self.get_keypoints(object_annotation) # key points in 3d model frame
+        # relative translation offset from the bbox centeroid to object centroid on 2d pixel plane
+        delta_c = obj_centroid_2d - c
+        trans_ratio = np.asarray([delta_c[0] / s, delta_c[1] / s, obj_z_gt / (self.scale_size / s)]).astype(np.float32)
 
-            diag = np.linalg.norm(keypoints3d[0, 1] - keypoints3d[0, 8])
-            keypoints_2d = (keypoints3d @ cam_R_m2c.T + cam_t_m2c) @ cam_K.T # n * 9 * 3, key points on 2d pixel plane
-            obj_z_gt = keypoints_2d[0, 0, 2] # depth of model centroid in camera frame
-            keypoints_2d = keypoints_2d[..., 0:2] / keypoints_2d[..., 2:] # n * 9 * 2, homogeneous 2d key points coordinates
-            obj_centroid_2d = keypoints_2d[0, 0, :2]
+        interpolate = cv2.INTER_NEAREST
+        # interpolate = cv2.INTER_LINEAR
+        rgb, c_h_, c_w_, s_, roi_coord_2d = self.zoom_in_v2(image, c, s, res=self.scale_size, return_roi_coord=True) # center-cropped rgb
 
-            bbox = [np.min(keypoints_2d[0, :, 0]), np.min(keypoints_2d[0, :, 1]), 
-                    np.max(keypoints_2d[0, :, 0])-np.min(keypoints_2d[0, :, 0]),
-                    np.max(keypoints_2d[0, :, 1])-np.min(keypoints_2d[0, :, 1])]
+        mask, *_ = self.zoom_in_v2(mask, c, s, res=self.scale_size, interpolate=interpolate) # center-cropped mask
+        mask = (mask == frame_info["object_id"])
+        rgb[mask[:, :, None] != [True, True, True]] = 0 # further align the background, especially in case the cropped rgb is outside the boundary of raw image
 
-            rgb_path = frame_annotation["image_name"]
-            mask_path = frame_annotation["omninocs_name"] + '_instances.png'
-            nocs_path = frame_annotation["omninocs_name"] + '_nocs.png'
+        nocs, *_ = self.zoom_in_v2(nocs_image, c, s, res=self.scale_size, interpolate=interpolate) 
 
-            image = cv2.imread(os.path.join(self.arkitscenes_path, rgb_path), cv2.IMREAD_COLOR)
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            H, W = image.shape[:2]
-            
-            mask_raw = cv2.imread(os.path.join(self.omninocs_arkitscenes_path, mask_path), cv2.IMREAD_UNCHANGED)
+        # label each x, y, z channel into intergers between [0, bin-1], and the bg is bin
+        nocs_x, nocs_y, nocs_z = nocs[:, :, 0], nocs[:, :, 1], nocs[:, :, 2]
+        for nocs_plane in (nocs_x, nocs_y, nocs_z):
+            nocs_plane[nocs_plane < 0] = 0
+            nocs_plane[nocs_plane > 0.999999] = 0.999999
+        gt_x_bin = np.asarray(nocs_x * self.xyz_bin, dtype=np.uint8) # intergers interval [0, bin-1], bin is the background
+        gt_y_bin = np.asarray(nocs_y * self.xyz_bin, dtype=np.uint8)
+        gt_z_bin = np.asarray(nocs_z * self.xyz_bin, dtype=np.uint8)
+        gt_x_bin[np.logical_not(mask)] = self.xyz_bin
+        gt_y_bin[np.logical_not(mask)] = self.xyz_bin
+        gt_z_bin[np.logical_not(mask)] = self.xyz_bin
+        gt_xyz_bin = np.stack([gt_x_bin, gt_y_bin, gt_z_bin], axis=0) # (3, 480, 480)
 
-            nocs_image_raw = cv2.imread(os.path.join(self.omninocs_arkitscenes_path, nocs_path), cv2.IMREAD_COLOR)
-            nocs_image_raw = cv2.cvtColor(nocs_image_raw, cv2.COLOR_BGR2RGB)
-            nocs_image_raw = nocs_image_raw.astype(np.float32) / 255.0
-                
-            # if W != 360:
-            #     pad_width = 360 - W  # Amount of padding needed on the right
-            #     image = np.pad(image, ((0, 0), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
-            #     mask = np.pad(mask, ((0, 0), (0, pad_width)), mode='constant', constant_values=0)
-            #     nocs_image = np.pad(nocs_image, ((0, 0), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
-            #     W = 360
-            raw_image = image.copy()
+        nocs[np.logical_not(mask)] = 0
+        nocs_resized = np.stack([cv2.resize(nocs[..., i], (self.scale_size//14, self.scale_size//14), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
 
-            mask = cv2.resize(mask_raw, (W, H), cv2.INTER_NEAREST)
-            nocs_image = np.stack([cv2.resize(nocs_image_raw[..., i], (W, H), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
+        mask[np.sum(np.logical_or(nocs > 1, nocs < 0), axis=-1) != 0] = False
+        mask_resized = get_coarse_mask(mask, scale_factor=(1 / 14))
+        nocs_resized[np.logical_not(mask_resized)] = 0
 
-            image[mask != frame_info["object_id"]] = 0 # remove background
+        nocs_mask = np.ones_like(nocs_resized)
+        bg_pixels = np.all(nocs_resized == [0, 0, 0], axis=-1)
+        nocs_mask[bg_pixels] = [0, 0, 0]
 
-            c, s = self.xywh2cs(bbox, wh_max=self.scale_size)
+        c = np.array([c_w_, c_h_])
+        s = s_
+        keypoints_2d = (keypoints_2d - c.reshape(1, 1, 2)) / s  # * self.scale_size
 
-            # relative translation offset from the bbox centeroid to object centroid on 2d pixel plane
-            delta_c = obj_centroid_2d - c
-            trans_ratio = np.asarray([delta_c[0] / s, delta_c[1] / s, obj_z_gt / (self.scale_size / s)]).astype(np.float32)
-            
-            interpolate = cv2.INTER_NEAREST
-            # interpolate = cv2.INTER_LINEAR
-            rgb, c_h_, c_w_, s_, roi_coord_2d = self.zoom_in_v2(image, c, s, res=self.scale_size, return_roi_coord=True) # center-cropped rgb
-            
-            mask, *_ = self.zoom_in_v2(mask, c, s, res=self.scale_size, interpolate=interpolate) # center-cropped mask
-            mask = (mask == frame_info["object_id"])
-            rgb[mask[:, :, None] != [True, True, True]] = 0 # further align the background, especially in case the cropped rgb is outside the boundary of raw image
-        
-            nocs, *_ = self.zoom_in_v2(nocs_image, c, s, res=self.scale_size, interpolate=interpolate) 
+        gt_coord_x = np.arange(W)
+        gt_coord_y = np.arange(H)
+        gt_coord_xy = np.asarray(np.meshgrid(gt_coord_x, gt_coord_y)).transpose(1, 2 ,0)
+        gt_coord_2d = crop_resize_by_warp_affine(gt_coord_xy, c, s, self.scale_size, interpolation=cv2.INTER_NEAREST).astype(np.float32) # HWC
 
-            # label each x, y, z channel into intergers between [0, bin-1], and the bg is bin
-            nocs_x, nocs_y, nocs_z = nocs[:, :, 0], nocs[:, :, 1], nocs[:, :, 2]
-            for nocs_plane in (nocs_x, nocs_y, nocs_z):
-                nocs_plane[nocs_plane < 0] = 0
-                nocs_plane[nocs_plane > 0.999999] = 0.999999
-            gt_x_bin = np.asarray(nocs_x * self.xyz_bin, dtype=np.uint8) # intergers interval [0, bin-1], bin is the background
-            gt_y_bin = np.asarray(nocs_y * self.xyz_bin, dtype=np.uint8)
-            gt_z_bin = np.asarray(nocs_z * self.xyz_bin, dtype=np.uint8)
-            gt_x_bin[np.logical_not(mask)] = self.xyz_bin
-            gt_y_bin[np.logical_not(mask)] = self.xyz_bin
-            gt_z_bin[np.logical_not(mask)] = self.xyz_bin
-            gt_xyz_bin = np.stack([gt_x_bin, gt_y_bin, gt_z_bin], axis=0) # (3, 480, 480)
+        dis_sym = np.zeros((3, 4, 4))
+        if 'symmetries_discrete' in object_annotation:
+            mats = np.asarray([np.asarray(mat_list).reshape(4, 4) for mat_list in object_annotation['symmetries_discrete']])
+            dis_sym[:mats.shape[0]] = mats
+        con_sym = np.zeros((3, 6))
+        if 'symmetries_continuous' in object_annotation:
+            for i, ao in enumerate(object_annotation['symmetries_continuous']):
+                axis = np.asarray(ao['axis'])
+                offset = np.asarray(ao['offset'])
+                con_sym[i] = np.concatenate([axis, offset])
 
-            nocs[np.logical_not(mask)] = 0
-            nocs_resized = np.stack([cv2.resize(nocs[..., i], (self.scale_size//14, self.scale_size//14), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
-            
-            mask[np.sum(np.logical_or(nocs > 1, nocs < 0), axis=-1) != 0] = False
-            mask_resized = get_coarse_mask(mask, scale_factor=(1 / 14))
-            nocs_resized[np.logical_not(mask_resized)] = 0
+        if self.is_train:
+            rgb = self.augment_training_data(rgb.astype(np.uint8))
 
-            nocs_mask = np.ones_like(nocs_resized)
-            bg_pixels = np.all(nocs_resized == [0, 0, 0], axis=-1)
-            nocs_mask[bg_pixels] = [0, 0, 0]
-            
-            c = np.array([c_w_, c_h_])
-            s = s_
-            keypoints_2d = (keypoints_2d - c.reshape(1, 1, 2)) / s  # * self.scale_size
-
-            gt_coord_x = np.arange(W)
-            gt_coord_y = np.arange(H)
-            gt_coord_xy = np.asarray(np.meshgrid(gt_coord_x, gt_coord_y)).transpose(1, 2 ,0)
-            gt_coord_2d = crop_resize_by_warp_affine(gt_coord_xy, c, s, self.scale_size, interpolation=cv2.INTER_NEAREST).astype(np.float32) # HWC
-            
-            dis_sym = np.zeros((3, 4, 4))
-            if 'symmetries_discrete' in object_annotation:
-                mats = np.asarray([np.asarray(mat_list).reshape(4, 4) for mat_list in object_annotation['symmetries_discrete']])
-                dis_sym[:mats.shape[0]] = mats
-            con_sym = np.zeros((3, 6))
-            if 'symmetries_continuous' in object_annotation:
-                for i, ao in enumerate(object_annotation['symmetries_continuous']):
-                    axis = np.asarray(ao['axis'])
-                    offset = np.asarray(ao['offset'])
-                    con_sym[i] = np.concatenate([axis, offset])
-
-            if self.is_train:
-                rgb = self.augment_training_data(rgb.astype(np.uint8))
-            
-            if mask_resized.sum() < 32 or nocs_mask[:, :, 0].sum() < 32:
-                idx += 1
-                if idx >= len(self.data_list):
-                    idx = 0
-            else:
-                out_dict = {
-                    'raw_scene': raw_image.transpose((2, 0, 1)), # (3, H, W), dtype = np.uint8
-                    'image': (rgb.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 490, 490)
-                    'gt_xyz_bin': gt_xyz_bin, # (3, H, W), dtype = np.uint8
-                    'gt_coord_2d': gt_coord_2d.astype(np.float32), # (490, 490, 2)
-                    'bbox_size': s,
-                    'bbox_center': c,
-                    'gt_bbox_2d': np.array(bbox).astype(np.float32), # (4,)
-                    'roi_coord_2d': roi_coord_2d.astype(np.float32), # (2, 490, 490)
-                    'gt_r': cam_R_m2c.astype(np.float32),
-                    'gt_t': cam_t_m2c.reshape(-1).astype(np.float32),
-                    'cam': cam_K.astype(np.float32),
-                    'resize_ratio': np.array([self.scale_size / s], dtype=np.float32),
-                    'gt_trans_ratio': trans_ratio.reshape(-1).astype(np.float32),
-                    'mask': mask, # (490, 490)
-                    'mask_resized': mask_resized, # (32, 32)
-                    'nocs': nocs.transpose((2, 0, 1)).astype(np.float32), # (3, 490, 490)
-                    'nocs_resized': nocs_resized.transpose((2, 0, 1)).astype(np.float32), # (3, 35, 35)
-                    'nocs_mask': nocs_mask[:, :, 0],
-                    # 'kps': kp_i.astype(np.float32),
-                    'kps_3d_m': keypoints3d[0].astype(np.float32), # (9, 3)
-                    'kps_3d_center': keypoints3d[0, 0].astype(np.float32), # (3)
-                    'kps_3d_dig': np.array([diag], dtype=np.float32),
-                    'dis_sym': dis_sym.astype(np.float32),
-                    'con_sym': con_sym.astype(np.float32),
-                    'class_name': category_name,
-                    # '3d_feat': feat_3d.astype(np.float32) # (1024, 387)
-                    'img_name': frame_annotation["image_name"]
-                }
-                break
+        # if mask_resized.sum() < 32 or nocs_mask[:, :, 0].sum() < 32:
+        #     idx += 1
+        #     if idx >= len(self.data_list):
+        #         idx = 0
+        # else:
+        out_dict = {
+            'raw_scene': raw_image.transpose((2, 0, 1)), # (3, H, W), dtype = np.uint8
+            'image': (rgb.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 490, 490)
+            'gt_xyz_bin': gt_xyz_bin, # (3, H, W), dtype = np.uint8
+            'gt_coord_2d': gt_coord_2d.astype(np.float32), # (490, 490, 2)
+            'bbox_size': s,
+            'bbox_center': c,
+            'gt_bbox_2d': np.array(bbox).astype(np.float32), # (4,)
+            'roi_coord_2d': roi_coord_2d.astype(np.float32), # (2, 490, 490)
+            'gt_r': cam_R_m2c.astype(np.float32),
+            'gt_t': cam_t_m2c.reshape(-1).astype(np.float32),
+            'cam': cam_K.astype(np.float32),
+            'resize_ratio': np.array([self.scale_size / s], dtype=np.float32),
+            'gt_trans_ratio': trans_ratio.reshape(-1).astype(np.float32),
+            'mask': mask, # (490, 490)
+            'mask_resized': mask_resized, # (32, 32)
+            'nocs': nocs.transpose((2, 0, 1)).astype(np.float32), # (3, 490, 490)
+            'nocs_resized': nocs_resized.transpose((2, 0, 1)).astype(np.float32), # (3, 35, 35)
+            'nocs_mask': nocs_mask[:, :, 0],
+            # 'kps': kp_i.astype(np.float32),
+            'kps_3d_m': keypoints3d[0].astype(np.float32), # (9, 3)
+            'kps_3d_center': keypoints3d[0, 0].astype(np.float32), # (3)
+            'kps_3d_dig': np.array([diag], dtype=np.float32),
+            'dis_sym': dis_sym.astype(np.float32),
+            'con_sym': con_sym.astype(np.float32),
+            'class_name': category_name,
+            # '3d_feat': feat_3d.astype(np.float32) # (1024, 387)
+            'img_name': frame_annotation["image_name"]
+        }
 
         return out_dict
 
