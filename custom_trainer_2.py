@@ -13,7 +13,7 @@ from mmcv.runner import build_optimizer
 import pytorch_lightning as L
 from scipy.spatial.transform import Rotation as R
 
-from models.model_wo_sd import OV9D
+from models.model_2 import OV9D
 import utils.logging as logging
 from utils.losses import angular_distance, L1_reg_nocs_loss, CrossEntropyNocsMapLoss
 from utils.pose_postprocessing import pose_from_pred_centroid_z
@@ -78,6 +78,7 @@ class CustomTrainer(L.LightningModule):
 
     
     def _step(self, batch, prex, batch_idx, log=True):
+        input_scene = batch['input_scene']
         gt_rgb = batch['image']
         # input_rgb = batch['input_image']
         mask = batch['mask'].to(bool)
@@ -87,11 +88,12 @@ class CustomTrainer(L.LightningModule):
         roi_coord_2d = batch['roi_coord_2d'] # (b, 2, 480, 480)
         bbox_wh = batch['bbox_size'] # (b)
         bbox_center = batch['bbox_center'] # (b, 2)
+        bbox_wh_resized = batch['bbox_size_resized'] # (b)
+        bbox_center_resized = batch['bbox_center_resized'] # (b, 2)
         ratio = batch['resize_ratio'].squeeze(-1) # (b)
         nocs = batch['nocs'].permute(0, 2, 3, 1) # (b, 480, 480, 3)
         nocs_resized = batch['nocs_resized'].permute(0, 2, 3, 1) # (b, 35, 35, 3)
         nocs_mask = batch['nocs_mask'].to(bool) # (b, 35, 35)
-        gt_xyz_bin = batch['gt_xyz_bin'] # (b, 3, 480, 480)
         dis_sym = batch['dis_sym']
         con_sym = batch['con_sym']
         gt_r = batch['gt_r'] # (b, 3, 3)
@@ -118,7 +120,7 @@ class CustomTrainer(L.LightningModule):
         #     feat_2d_bp_normed.append(normalize_3d_points(feat_2d_bp[i]))
         # feat_2d_bp_normed = torch.stack(feat_2d_bp_normed, dim=0).to(feat_2d_bp)
 
-        preds = self.model(gt_rgb, mask, roi_coord_2d)
+        preds = self.model(input_scene, mask, bbox_center_resized, bbox_wh_resized, roi_coord_2d)
 
         if self.args.decode_rt:
             pred_r, pred_t, pred_dims = preds['pred_r'], preds['pred_t'], preds['pred_dims']
@@ -142,6 +144,7 @@ class CustomTrainer(L.LightningModule):
                 dim=1,
             )
             self.model_output = {'pred_ego_rot': pred_ego_rot, 'pred_trans': pred_trans, 'pred_dims': pred_dims, 'pred_center_2d': pred_center_2d}
+            
             # Size loss
             kpts_m = torch.zeros([b, 8, 3]).to(gt_kps_3d)
             l, w, h = pred_dims[:, 0].unsqueeze(1), pred_dims[:, 1].unsqueeze(1), pred_dims[:, 2].unsqueeze(1)
@@ -151,15 +154,12 @@ class CustomTrainer(L.LightningModule):
             kpts_pred = transform_pts_batch(kpts_m, gt_r, gt_t)
             kpts_tgt = transform_pts_batch(gt_kps_3d[:, 1:, :], gt_r, gt_t)
             loss_sz = nn.L1Loss(reduction="mean")(kpts_pred, kpts_tgt)
-            if torch.isnan(loss_sz):
-                print("loss size is nan")
+
             # self.model_output.update({'pred_pts_3d': kpts_pred})
             # points matching loss
             kps_pred = transform_pts_batch(gt_kps_3d[:, 1:, :], pred_ego_rot, pred_trans)
             kps_tgt = transform_pts_batch(gt_kps_3d[:, 1:, :], gt_r, gt_t)
             loss_pm = nn.L1Loss(reduction="mean")(kps_pred, kps_tgt)
-            if torch.isnan(loss_pm):
-                print("loss pm is nan")
 
             # points-bind loss
             bbox_3d_pred = transform_pts_batch(kpts_m, pred_ego_rot, pred_trans)
@@ -170,26 +170,20 @@ class CustomTrainer(L.LightningModule):
 
             # rotation loss
             loss_rot = angular_distance(pred_ego_rot, gt_r)
-            if torch.isnan(loss_rot):
-                print("loss rot is nan")
+
             #translation loss
             loss_trans = nn.L1Loss(reduction="mean")(pred_trans, gt_t)
-            if torch.isnan(loss_trans):
-                print("loss trans is nan")
+
             # bind loss
             pred_bind = torch.bmm(pred_ego_rot.permute(0, 2, 1), pred_trans.view(-1, 3, 1)).view(-1, 3)
             gt_bind = torch.bmm(gt_r.permute(0, 2, 1), gt_t.view(-1, 3, 1)).view(-1, 3)
             loss_bind = nn.L1Loss(reduction="mean")(pred_bind, gt_bind)
-            if torch.isnan(loss_bind):
-                print("loss bind is nan")
+
             # centroid loss
             loss_centroid = nn.L1Loss(reduction="mean")(pred_t[:, :2], gt_trans_ratio[:, :2])
-            if torch.isnan(loss_centroid):
-                print("loss centroid is nan")
+
             # z loss
             loss_z = nn.L1Loss(reduction="mean")(pred_t[:, 2], gt_trans_ratio[:, 2]/translation_ratio)
-            if torch.isnan(loss_z):
-                print("loss z is nan")
 
             loss_total = loss_rot + loss_pm + loss_pts_bind + loss_sz + loss_trans + loss_bind + loss_centroid + loss_z
             self.loss_dict = {
@@ -256,43 +250,6 @@ class CustomTrainer(L.LightningModule):
         # loss_o = L1_reg_nocs_loss(b, pred_nocs_feat.permute(0, 2, 3, 1), gt_nocs, nocs_mask, dis_sym, con_sym, self.criterion_L1)
         loss_o = self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[nocs_mask], gt_nocs[nocs_mask]) + 0.5 * self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[~mask_resized], gt_nocs[~mask_resized])
         pred_nocs = pred_nocs_feat.permute(0, 2, 3, 1)
-        # if self.args.nocs_type == 'L1':
-        #     # loss_o = 2*self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[mask_resized], gt_nocs[mask_resized]) + 0.5*self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[~mask_resized], gt_nocs[~mask_resized])
-        #     loss_o = self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[nocs_mask], gt_nocs[nocs_mask]) + 0.5 * self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[~mask_resized], gt_nocs[~mask_resized])
-        #     pred_nocs = pred_nocs_feat.permute(0, 2, 3, 1)
-        #     # loss_o = nn.L1Loss(reduction='sum')(pred_nocs*input_MASK.unsqueeze(-1), gt_nocs*input_MASK.unsqueeze(-1)) / input_MASK.sum().float().clamp(min=1.0)
-        # elif self.args.nocs_type == 'CE': # classification + regression
-        #     out_x, out_y, out_z = torch.split(pred_nocs_feat, pred_nocs_feat.shape[1] // 3, dim=1) # (b, xyz_bin, h, w)
-        #     gt_xyz_bin = gt_xyz_bin.long() # (b, 3, h, w)
-        #     loss_coord_x = self.criterion_CE(out_x * input_MASK[:, None, :, :], gt_xyz_bin[:, 0] * input_MASK.long(), input_MASK) / input_MASK.sum().float().clamp(min=1.0)
-        #     loss_coord_y = self.criterion_CE(out_y * input_MASK[:, None, :, :], gt_xyz_bin[:, 1] * input_MASK.long(), input_MASK) / input_MASK.sum().float().clamp(min=1.0)
-        #     loss_coord_z = self.criterion_CE(out_z * input_MASK[:, None, :, :], gt_xyz_bin[:, 2] * input_MASK.long(), input_MASK) / input_MASK.sum().float().clamp(min=1.0)
-        #     loss_classification = loss_coord_x + loss_coord_y + loss_coord_z
-
-        #     pred_nocs = torch.zeros_like(batch['nocs']).to(batch['nocs']) # (b, 3, h, w)
-        #     x_grid = self.x_grid_center.unsqueeze(0).unsqueeze(1).unsqueeze(1).expand(b, h, w, -1) # (b, h, w, xyz_bin)
-        #     y_grid = self.y_grid_center.unsqueeze(0).unsqueeze(1).unsqueeze(1).expand(b, h, w, -1) # (b, h, w, xyz_bin)
-        #     z_grid = self.z_grid_center.unsqueeze(0).unsqueeze(1).unsqueeze(1).expand(b, h, w, -1) # (b, h, w, xyz_bin)
-        #     for b_i in range(b):
-        #         pred_nocs[b_i][0] = x_grid[b_i][torch.arange(h)[:, None], torch.arange(w), gt_xyz_bin[b_i, 0]]
-        #         pred_nocs[b_i][1] = y_grid[b_i][torch.arange(h)[:, None], torch.arange(w), gt_xyz_bin[b_i, 1]]
-        #         pred_nocs[b_i][2] = z_grid[b_i][torch.arange(h)[:, None], torch.arange(w), gt_xyz_bin[b_i, 2]]
-        #     pred_nocs = ((pred_nocs + pred_nocs_offset)).permute(0, 2, 3, 1)
-        #     loss_regression = L1_reg_nocs_loss(b, pred_nocs, nocs, input_MASK, dis_sym, con_sym, self.criterion_L1)
-        #     loss_o = 0.1*loss_classification + loss_regression
-        # else:
-        #     raise ValueError("The nocs type should be either CE of L1.")
-        
-        # # self-supervision loss
-        # pred_nocs_ori_size = pred_nocs_feat_ori_size.permute(0, 2, 3, 1) if pred_nocs_feat_ori_size is not None else pred_nocs
-        # pred_pcl_m = (pred_nocs_ori_size - 0.5) * gt_model_size[:, :, None, None] + gt_model_center.reshape(b, 1, 1, 3)
-        # pred_pcl_c = gt_r @ pred_pcl_m.reshape(b, -1, 3).permute(0, 2, 1) + gt_t.unsqueeze(-1)*translation_ratio
-        # pred_pcl_2d = cams @ pred_pcl_c
-        # pred_pcl_2d = pred_pcl_2d[:, :2, :] / pred_pcl_2d[:, 2:3, :]
-        # gt_pcl_2d = gt_coord_2d
-        # loss_self_suv = (nn.L1Loss(reduction='none')(pred_pcl_2d.reshape(b, 2, h, w).permute(0, 2 ,3 ,1), gt_pcl_2d)*mask.unsqueeze(-1)).sum() / mask.sum().float().clamp(min=1.0)
-
-        # loss_self_suv = self.rescale_loss(loss_self_suv)
 
         # size loss
         kpts_m = torch.zeros([b, 8, 3]).to(gt_kps_3d)

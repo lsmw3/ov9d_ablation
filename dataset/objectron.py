@@ -195,7 +195,6 @@ class objectron(BaseDataset):
             W = 360
         raw_image = image.copy()
 
-        # vis_img = draw_3d_bbox_with_coordinate_frame(image, kps3d[0], cam_R_m2c, cam_t_m2c.reshape(-1), cam_K)
         image[mask != frame_info["object_id"]] = 0 # remove background
 
         c, s = self.xywh2cs(bbox, wh_max=self.scale_size)

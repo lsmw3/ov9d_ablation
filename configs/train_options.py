@@ -30,7 +30,6 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--weight_decay',          type=float, default=5e-2)
         parser.add_argument('--layer_decay',          type=float, default=0.9)
         
-        parser.add_argument('--scale_size',  type=int, default=490)
         parser.add_argument('--log_dir', type=str, default='./logs')
 
         # logging options

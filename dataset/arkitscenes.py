@@ -146,17 +146,11 @@ class arkitscenes(BaseDataset):
         nocs_image_raw = cv2.imread(os.path.join(self.omninocs_arkitscenes_path, nocs_path), cv2.IMREAD_COLOR)
         nocs_image_raw = cv2.cvtColor(nocs_image_raw, cv2.COLOR_BGR2RGB)
         nocs_image_raw = nocs_image_raw.astype(np.float32) / 255.0
-            
-        # if W != 360:
-        #     pad_width = 360 - W  # Amount of padding needed on the right
-        #     image = np.pad(image, ((0, 0), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
-        #     mask = np.pad(mask, ((0, 0), (0, pad_width)), mode='constant', constant_values=0)
-        #     nocs_image = np.pad(nocs_image, ((0, 0), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
-        #     W = 360
-        raw_image = image.copy()
-
+        
         mask = cv2.resize(mask_raw, (W, H), cv2.INTER_NEAREST)
         nocs_image = np.stack([cv2.resize(nocs_image_raw[..., i], (W, H), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
+    
+        raw_image = image.copy()
 
         image[mask != frame_info["object_id"]] = 0 # remove background
 

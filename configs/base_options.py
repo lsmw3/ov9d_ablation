@@ -31,9 +31,6 @@ class BaseOptions():
         parser.add_argument('--num_filters', nargs='+', type=int)
         parser.add_argument('--deconv_kernels', nargs='+', type=int)
 
-        parser.add_argument('--raw_w', type=int, default=640)
-        parser.add_argument('--raw_h', type=int, default=480)
-
         parser.add_argument('--dino', action='store_true') 
         parser.add_argument('--dino_type', type=str, default=None)
         parser.add_argument('--attn_depth', type=int, default=4)
@@ -42,10 +39,13 @@ class BaseOptions():
 
         parser.add_argument('--rot_dim', type=int, default=6)
         parser.add_argument('--embed_dim', type=int, default=128)
+        parser.add_argument('--scale_size',  type=int, default=490)
         
         parser.add_argument('--num_gpus', type=int, default=1)
 
         parser.add_argument('--decode_rt', action='store_true')
         parser.add_argument('--with_attn', action='store_true')
+
+        parser.add_argument('--ckpt_path', type=str, default=None)
         
         return parser

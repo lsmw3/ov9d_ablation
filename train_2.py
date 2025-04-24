@@ -12,7 +12,7 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.strategies import DDPStrategy
 
-from custom_trainer import CustomTrainer
+from custom_trainer_2 import CustomTrainer
 
 from dataset.base_dataset import get_dataset
 from configs.train_options import TrainOptions
@@ -194,7 +194,7 @@ def main():
 
     sampler_val = RandomSampler(val_dataset) # SequentialSampler(val_dataset)
 
-    if args.dataset == "arkitscenes" or args.dataset == "multiscene":
+    if args.dataset == "arkitscenes_2" or args.dataset == "multiscene_2":
         train_loader = DataLoader(train_dataset,
                                 batch_size=args.batch_size,
                                 sampler=sampler_train,
@@ -232,20 +232,20 @@ def main():
     # world_size = int(os.getenv('WORLD_SIZE', '1'))
     # strategy = DDPStrategy(find_unused_parameters=True) if world_size > 1 else None
 
-    if args.dataset == "arkitscenes":
-        ckpt_folder_name = "arkitscenes"
+    if args.dataset == "arkitscenes_2":
+        ckpt_folder_name = "arkitscenes_2"
         if args.decode_rt:
             ckpt_folder_name = ckpt_folder_name + "-decode_rt"
-    if args.dataset == "hypersim":
-        ckpt_folder_name = "hypersim"
+    if args.dataset == "hypersim_2":
+        ckpt_folder_name = "hypersim_2"
         if args.decode_rt:
             ckpt_folder_name = ckpt_folder_name + "-decode_rt"
-    if args.dataset == "objectron":
-        ckpt_folder_name = "objectron"
+    if args.dataset == "objectron_2":
+        ckpt_folder_name = "objectron_2"
         if args.decode_rt:
             ckpt_folder_name = ckpt_folder_name + "-decode_rt"
-    if args.dataset == "multiscene":
-        ckpt_folder_name = "multiscene"
+    if args.dataset == "multiscene_2":
+        ckpt_folder_name = "multiscene_2"
         if args.decode_rt:
             ckpt_folder_name = ckpt_folder_name + "-decode_rt"
     checkpoint_callback = ModelCheckpoint(

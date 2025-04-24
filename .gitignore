@@ -21,6 +21,7 @@ dino_vis_masked_unresized.jpg
 gt_nocs.jpg
 pred_nocs.jpg
 point_cloud.pcd
+test_pose/
 
 train_wo_sd_objectron.sh
 

@@ -7,9 +7,10 @@ from scipy.spatial.transform import Rotation as R
 from dataset.base_dataset import BaseDataset
 from utils.utils import get_2d_coord_np, crop_resize_by_warp_affine, get_coarse_mask
 import torch
+import zipfile
 
 
-class hypersim(BaseDataset):
+class multiscene(BaseDataset):
     def __init__(self, data_path, data_name, data_type, feat_3d_path, xyz_bin: int=64,
                  is_train=True, scale_size=420, num_view=50):
         super().__init__()
@@ -18,87 +19,121 @@ class hypersim(BaseDataset):
         self.xyz_bin = xyz_bin
 
         self.is_train = is_train
-        self.hypersim_path = os.path.join(data_path, "hypersim")
-        self.omninocs_hypersim_path = os.path.join(data_path, "omninocs_release_hypersim")
-        self.omninocs_annotation_path = os.path.join(self.omninocs_hypersim_path, "seperate_annotation")
-        with open(os.path.join(self.omninocs_hypersim_path, "frame_mask_obj_list.json"), 'r') as f:
-            self.omninocs_frame_mask_obj_list = json.load(f)
-
         self.data_list = []
-
-        with open(f"dataset_collect/hypersim_valid_instances_{data_type}.json", "r") as f:
-            valid_instances = json.load(f)
-
-        for valid_instance in valid_instances:
-            scene_id = valid_instance["scene_id"]
-            scene_path = os.path.join(self.omninocs_annotation_path, scene_id)
-
-            object_id = valid_instance["object_id"]
-            object_json = f"{object_id}.json"
-            with open(os.path.join(scene_path, object_json), 'r') as f:
-                omninocs_annotation_list_of_object = json.load(f)
-
-            frame = omninocs_annotation_list_of_object[valid_instance["frame_idx"]]
-            info_dict = {
-                'scene': scene_id,
-                'annotation': frame,
-                'object_id': object_id
-            }
-
-            self.data_list.append(info_dict)
         
-        # valid_instances = []
+        self.objectron_path = os.path.join(data_path, "Objectron/objectron_origin")
+        self.omninocs_objectron_path = os.path.join(data_path, "Objectron/omninocs_release_objectron")
+        self.omninocs_annotation_objectron_path = os.path.join(self.omninocs_objectron_path, "seperate_annotation")
+        # with open(os.path.join(self.omninocs_objectron_path, "frame_mask_obj_list.json"), 'r') as f:
+        #     self.omninocs_frame_mask_obj_list_objectron = json.load(f)
+        
+        self.hypersim_path = os.path.join(data_path, "Hypersim/hypersim")
+        self.omninocs_hypersim_path = os.path.join(data_path, "Hypersim/omninocs_release_hypersim")
+        self.omninocs_annotation_hypersim_path = os.path.join(self.omninocs_hypersim_path, "seperate_annotation")
+        # with open(os.path.join(self.omninocs_hypersim_path, "frame_mask_obj_list.json"), 'r') as f:
+        #     self.omninocs_frame_mask_obj_list_hypersim = json.load(f)
+        
+        self.arkitscenes_path = os.path.join(data_path, "ARKitScenes/ARKitScenes")
+        self.omninocs_arkitscenes_path = os.path.join(data_path, "ARKitScenes/omninocs_release_ARKitScenes")
+        self.omninocs_annotation_arkitscenes_path = os.path.join(self.omninocs_arkitscenes_path, "seperate_annotation")
+        # with open(os.path.join(self.omninocs_arkitscenes_path, "frame_mask_obj_list.json"), 'r') as f:
+        #     self.omninocs_frame_mask_obj_list_arkitscenes = json.load(f)
+            
+        for dataset_type in ["objectron", "hypersim", "arkitscenes"]:
+            if dataset_type == "objectron":
+                self.rgb_data_zip_paths = {
+                    file.split('.')[0]: os.path.join(self.objectron_path, file)
+                    for file in os.listdir(self.objectron_path) if file.endswith('.zip')
+                }
+                self.omninocs_zip_path = os.path.join(self.omninocs_objectron_path, 'objectron.zip')
+                self._worker_zip_cache = {}
+                with open(f"dataset_collect/objectron_valid_instances_{data_type}.json", "r") as f:
+                    valid_instances_objectron = json.load(f)
 
-        # self.data_path = os.path.join(self.omninocs_hypersim_path, f"hypersim_{data_type}.json")
-        # with open(self.data_path, "r") as f:
-        #     self.scene_list = json.load(f)
-        # for scene_id in self.scene_list:
-        #     scene_path = os.path.join(self.omninocs_annotation_path, scene_id)
-        #     if not os.path.isdir(scene_path):
-        #         continue
+                for valid_instance in valid_instances_objectron:
+                    scene_id = valid_instance["scene_id"]
+                    scene_path = os.path.join(self.omninocs_annotation_objectron_path, scene_id)
+                    object_id = valid_instance["object_id"]
+                    object_json = f"{object_id}.json"
+                    with open(os.path.join(scene_path, object_json), 'r') as f:
+                        omninocs_annotation_list_of_object = json.load(f)
+                    frame = omninocs_annotation_list_of_object[valid_instance["frame_idx"]]
+                    info_dict = {
+                        'dataset': 'objectron',
+                        'scene': scene_id,
+                        'annotation': frame,
+                        'object_id': object_id
+                    }
+                    self.data_list.append(info_dict)
+                    
+            if dataset_type == "hypersim":
+                with open(f"dataset_collect/hypersim_valid_instances_{data_type}.json", "r") as f:
+                    valid_instances_hypersim = json.load(f)
+                    
+                for valid_instance in valid_instances_hypersim:
+                    scene_id = valid_instance["scene_id"]
+                    scene_path = os.path.join(self.omninocs_annotation_hypersim_path, scene_id)
+                    object_id = valid_instance["object_id"]
+                    object_json = f"{object_id}.json"
+                    with open(os.path.join(scene_path, object_json), 'r') as f:
+                        omninocs_annotation_list_of_object = json.load(f)
+                    frame = omninocs_annotation_list_of_object[valid_instance["frame_idx"]]
+                    info_dict = {
+                        'dataset': 'hypersim',
+                        'scene': scene_id,
+                        'annotation': frame,
+                        'object_id': object_id
+                    }
+                    self.data_list.append(info_dict)
+            
+            if dataset_type == "arkitscenes":
+                with open(f"dataset_collect/arkitscenes_valid_instances_{data_type}.json", "r") as f:
+                    valid_instances = json.load(f)
 
-        #     for object_json in os.listdir(scene_path):
-        #         object_id = int(object_json.split('.')[0])
-        #         with open(os.path.join(scene_path, object_json), 'r') as f:
-        #             omninocs_annotation_list_of_object = json.load(f)
-        #         for frame in omninocs_annotation_list_of_object:
-        #             if object_id not in self.omninocs_frame_mask_obj_list.get(frame["image_name"], []):
-        #                 continue
-        #             # feat_3d_points = np.load(os.path.join(feat_3d_path, scene_id, "3d_feat.npy"))
-        #             info_dict = {
-        #                 'scene': scene_id,
-        #                 'annotation': frame,
-        #                 'object_id': object_id
-        #                 # '3d_feat': feat_3d_points # (1024, 387)
-        #             }
-        #             if not self.check_valid_instance(info_dict):
-        #                 continue
-        #             else:
-        #                 valid_instance = {
-        #                     'scene_id': scene_id,
-        #                     'object_id': object_id,
-        #                     'frame_idx': omninocs_annotation_list_of_object.index(frame)
-        #                 }
-
-        #             valid_instances.append(valid_instance)
-
-        #             self.data_list.append(info_dict)
-
-        # with open(f"dataset_collect/hypersim_valid_instances_{data_type}.json", "w") as f:
-        #     json.dump(valid_instances, f, indent=2)
+                for valid_instance in valid_instances:
+                    scene_id = valid_instance["scene_id"]
+                    scene_path = os.path.join(self.omninocs_annotation_arkitscenes_path, scene_id)
+                    object_id = valid_instance["object_id"]
+                    object_json = f"{object_id}.json"
+                    with open(os.path.join(scene_path, object_json), 'r') as f:
+                        omninocs_annotation_list_of_object = json.load(f)
+                    frame = omninocs_annotation_list_of_object[valid_instance["frame_idx"]]
+                    info_dict = {
+                        'dataset': 'arkitscenes',
+                        'scene': scene_id,
+                        'annotation': frame,
+                        'object_id': object_id
+                    }
+                    self.data_list.append(info_dict)
         
         phase = 'train' if is_train else 'test'
-        print("Dataset: OmniNOCS Hypersim")
+        print("Dataset: OmniNOCS MultiScene")
         print("# of %s images: %d" % (phase, len(self.data_list)))
 
     def __len__(self):
         return len(self.data_list)
+    
+    def _get_worker_zip(self):
+        """Ensure each worker opens its own ZIP file once and keeps it open."""
+        worker_info = torch.utils.data.get_worker_info()
+        worker_id = worker_info.id if worker_info else 0  # Assign ID 0 for single-threaded mode
+
+        # Check if the worker already has ZIP files open
+        if worker_id not in self._worker_zip_cache:
+            self._worker_zip_cache[worker_id] = {}
+
+            # Open RGB ZIPs per worker
+            for category, zip_path in self.rgb_data_zip_paths.items():
+                self._worker_zip_cache[worker_id][category] = zipfile.ZipFile(zip_path, 'r')
+
+            # Open Omninocs ZIP per worker
+            self._worker_zip_cache[worker_id]["omninocs"] = zipfile.ZipFile(self.omninocs_zip_path, 'r')
+
+        return self._worker_zip_cache[worker_id]
 
     def __getitem__(self, idx):
         frame_info = self.data_list[idx]
-        # scene, view, cam, gt, gt_info, meta, feat_3d = info['scene'], info['view'], info['cam'], info['gt'], info['gt_info'], info['meta'], info['3d_feat']
         frame_annotation = frame_info['annotation']
-        assert len(frame_annotation["objects"]) == 1
         
         category_name = frame_annotation["objects"][0]["category"]
 
@@ -133,16 +168,53 @@ class hypersim(BaseDataset):
         rgb_path = frame_annotation["image_name"]
         mask_path = frame_annotation["omninocs_name"] + '_instances.png'
         nocs_path = frame_annotation["omninocs_name"] + '_nocs.png'
-
-        image = cv2.imread(os.path.join(self.hypersim_path, rgb_path), cv2.IMREAD_COLOR)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        H, W = image.shape[:2]
         
-        mask = cv2.imread(os.path.join(self.omninocs_hypersim_path, mask_path), cv2.IMREAD_UNCHANGED)
+        if frame_info["dataset"] == "objectron":
+            category_name = frame_annotation['image_name'].split('/')[0]
+            rgb_path = frame_annotation["image_name"] + '.png'
+            zip_files = self._get_worker_zip()
+            with zip_files[category_name].open(rgb_path) as rgb_file:
+                image = np.frombuffer(rgb_file.read(), np.uint8)
+                image = cv2.imdecode(image, cv2.IMREAD_COLOR)
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            H, W = image.shape[:2]
+            with zip_files["omninocs"].open(mask_path) as mask_file:
+                mask = np.frombuffer(mask_file.read(), np.uint8)
+                mask = cv2.imdecode(mask, cv2.IMREAD_UNCHANGED)
+            with zip_files["omninocs"].open(nocs_path) as nocs_file:
+                nocs_image = np.frombuffer(nocs_file.read(), np.uint8)
+                nocs_image = cv2.imdecode(nocs_image, cv2.IMREAD_COLOR).astype(np.float32) / 255.0
+            if W != 360:
+                pad_width = 360 - W  # Amount of padding needed on the right
+                image = np.pad(image, ((0, 0), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
+                mask = np.pad(mask, ((0, 0), (0, pad_width)), mode='constant', constant_values=0)
+                nocs_image = np.pad(nocs_image, ((0, 0), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
+                W = 360
+        
+        if frame_info["dataset"] == "hypersim":
+            image = cv2.imread(os.path.join(self.hypersim_path, rgb_path), cv2.IMREAD_COLOR)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            H, W = image.shape[:2]
+            
+            mask = cv2.imread(os.path.join(self.omninocs_hypersim_path, mask_path), cv2.IMREAD_UNCHANGED)
 
-        nocs_image = cv2.imread(os.path.join(self.omninocs_hypersim_path, nocs_path), cv2.IMREAD_COLOR)
-        nocs_image = cv2.cvtColor(nocs_image, cv2.COLOR_BGR2RGB)
-        nocs_image = nocs_image.astype(np.float32) / 255.0
+            nocs_image = cv2.imread(os.path.join(self.omninocs_hypersim_path, nocs_path), cv2.IMREAD_COLOR)
+            nocs_image = cv2.cvtColor(nocs_image, cv2.COLOR_BGR2RGB)
+            nocs_image = nocs_image.astype(np.float32) / 255.0
+        
+        if frame_info["dataset"] == "arkitscenes":
+            image = cv2.imread(os.path.join(self.arkitscenes_path, rgb_path), cv2.IMREAD_COLOR)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            H, W = image.shape[:2]
+
+            mask_raw = cv2.imread(os.path.join(self.omninocs_arkitscenes_path, mask_path), cv2.IMREAD_UNCHANGED)
+
+            nocs_image_raw = cv2.imread(os.path.join(self.omninocs_arkitscenes_path, nocs_path), cv2.IMREAD_COLOR)
+            nocs_image_raw = cv2.cvtColor(nocs_image_raw, cv2.COLOR_BGR2RGB)
+            nocs_image_raw = nocs_image_raw.astype(np.float32) / 255.0
+            
+            mask = cv2.resize(mask_raw, (W, H), cv2.INTER_NEAREST)
+            nocs_image = np.stack([cv2.resize(nocs_image_raw[..., i], (W, H), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
         
         raw_image = image.copy()
 
@@ -252,74 +324,6 @@ class hypersim(BaseDataset):
         }
 
         return out_dict
-    
-    def check_valid_instance(self, frame_info):
-        frame_annotation = frame_info['annotation']
-
-        cam_K = [
-            frame_annotation["intrinsics"]["fx"], 0.0, frame_annotation["intrinsics"]["cx"],
-            0.0, frame_annotation["intrinsics"]["fy"], frame_annotation["intrinsics"]["cy"],
-            0.0, 0.0, 1.0
-        ]
-        cam_K = np.asarray(cam_K).reshape(3, 3)
-
-        object_annotation = {}
-        for obj in frame_annotation['objects']:
-            if obj["object_id"] == frame_info["object_id"]:
-                object_annotation = obj
-                break
-
-        cam_R_m2c, cam_t_m2c, obj_id = object_annotation['rotation'], object_annotation['translation'], object_annotation['object_id']
-        cam_R_m2c = np.asarray(cam_R_m2c).reshape(3, 3)
-        cam_t_m2c = np.asarray(cam_t_m2c).reshape(1, 1, 3)
-        keypoints3d = self.get_keypoints(object_annotation) # key points in 3d model frame
-
-        diag = np.linalg.norm(keypoints3d[0, 1] - keypoints3d[0, 8])
-        keypoints_2d = (keypoints3d @ cam_R_m2c.T + cam_t_m2c) @ cam_K.T # n * 9 * 3, key points on 2d pixel plane
-        obj_z_gt = keypoints_2d[0, 0, 2] # depth of model centroid in camera frame
-        keypoints_2d = keypoints_2d[..., 0:2] / keypoints_2d[..., 2:] # n * 9 * 2, homogeneous 2d key points coordinates
-        obj_centroid_2d = keypoints_2d[0, 0, :2]
-
-        bbox = [np.min(keypoints_2d[0, :, 0]), np.min(keypoints_2d[0, :, 1]), 
-                np.max(keypoints_2d[0, :, 0])-np.min(keypoints_2d[0, :, 0]),
-                np.max(keypoints_2d[0, :, 1])-np.min(keypoints_2d[0, :, 1])]
-
-        rgb_path = frame_annotation["image_name"]
-        mask_path = frame_annotation["omninocs_name"] + '_instances.png'
-        nocs_path = frame_annotation["omninocs_name"] + '_nocs.png'
-
-        image = cv2.imread(os.path.join(self.hypersim_path, rgb_path), cv2.IMREAD_COLOR)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        H, W = image.shape[:2]
-        
-        mask = cv2.imread(os.path.join(self.omninocs_hypersim_path, mask_path), cv2.IMREAD_UNCHANGED)
-
-        nocs_image = cv2.imread(os.path.join(self.omninocs_hypersim_path, nocs_path), cv2.IMREAD_COLOR)
-        nocs_image = cv2.cvtColor(nocs_image, cv2.COLOR_BGR2RGB)
-        nocs_image = nocs_image.astype(np.float32) / 255.0
-
-        c, s = self.xywh2cs(bbox, wh_max=self.scale_size)
-
-        mask, *_ = self.zoom_in_v2(mask, c, s, res=self.scale_size, interpolate=cv2.INTER_NEAREST)
-        mask = (mask == frame_info["object_id"])
-
-        nocs, *_ = self.zoom_in_v2(nocs_image, c, s, res=self.scale_size, interpolate=cv2.INTER_NEAREST)
-
-        nocs[np.logical_not(mask)] = 0
-        nocs_resized = np.stack([cv2.resize(nocs[..., i], (self.scale_size//14, self.scale_size//14), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
-        
-        mask[np.sum(np.logical_or(nocs > 1, nocs < 0), axis=-1) != 0] = False
-        mask_resized = get_coarse_mask(mask, scale_factor=(1 / 14))
-        nocs_resized[np.logical_not(mask_resized)] = 0
-
-        nocs_mask = np.ones_like(nocs_resized)
-        bg_pixels = np.all(nocs_resized == [0, 0, 0], axis=-1)
-        nocs_mask[bg_pixels] = [0, 0, 0]
-
-        if mask_resized.sum() < 15 or nocs_mask[:, :, 0].sum() < 15:
-            return False
-        else:
-            return True
 
     @staticmethod
     def get_keypoints(object_annotation, dt=5):

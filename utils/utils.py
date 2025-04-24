@@ -2,6 +2,8 @@ import numpy as np
 import torch
 import cv2
 import torch.nn.functional as F
+from PIL import Image, ImageDraw
+from pytorch3d import _C
 
 
 def get_coarse_mask(mask, scale_factor=1/7):
@@ -289,3 +291,176 @@ def draw_3d_bbox_with_coordinate_frame(image, keypoints, m2c_R, m2c_t, camera_ma
     cv2.circle(image_with_bbox, tuple(map(int, center_2d)), 5, (0, 165, 255), -1)  # orange center
     
     return image_with_bbox
+
+
+def draw_bbox_on_image_array(image_array, bbox, output_path=None):
+    """
+    Draw a bounding box on an image array and save it as a PNG file.
+    
+    Args:
+        image_array (np.ndarray): NumPy array representing the image
+        bbox (np.ndarray or list): Bounding box coordinates in format [x, y, w, h]
+                     where (x, y) is the top-left corner and (w, h) is the width and height
+        output_path (str, optional): Path where the output image will be saved.
+                                    If not provided, the function will return the modified array
+    
+    Returns:
+        np.ndarray: The modified image array with the bounding box drawn on it
+                   (if output_path is None), otherwise None
+    """
+    try:
+        # Convert numpy array to PIL Image
+        # Ensure the array is in the correct format (uint8)
+        if image_array.dtype != np.uint8:
+            image_array = (image_array * 255).astype(np.uint8)
+            
+        # Handle grayscale images
+        if len(image_array.shape) == 2:
+            pil_image = Image.fromarray(image_array, mode='L')
+            # Convert to RGB for drawing colored bbox
+            pil_image = pil_image.convert('RGB')
+        elif len(image_array.shape) == 3 and image_array.shape[2] == 1:
+            pil_image = Image.fromarray(image_array.squeeze(), mode='L')
+            pil_image = pil_image.convert('RGB')
+        elif len(image_array.shape) == 3 and image_array.shape[2] == 3:
+            pil_image = Image.fromarray(image_array, mode='RGB')
+        elif len(image_array.shape) == 3 and image_array.shape[2] == 4:
+            pil_image = Image.fromarray(image_array, mode='RGBA')
+        else:
+            raise ValueError(f"Unsupported image array shape: {image_array.shape}")
+        
+        # Create a drawing context
+        draw = ImageDraw.Draw(pil_image)
+        
+        # Extract bbox coordinates
+        x, y, w, h = bbox
+        
+        # Calculate bottom right corner
+        x2, y2 = x + w, y + h
+        
+        # Draw the rectangle (bounding box)
+        # Using a red color with width=2
+        draw.rectangle([x, y, x2, y2], outline="red", width=2)
+        
+        # If output path is provided, save the image
+        if output_path:
+            # Ensure output has .png extension
+            if not output_path.lower().endswith('.png'):
+                output_path += '.png'
+                
+            pil_image.save(output_path)
+            print(f"Image with bounding box saved to {output_path}")
+            return None
+        else:
+            # Convert back to numpy array
+            result_array = np.array(pil_image)
+            return result_array
+            
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return None
+
+
+def _check_coplanar(boxes: torch.Tensor, eps: float = 1e-4) -> torch.BoolTensor:
+    """
+    Checks that plane vertices are coplanar.
+    Returns a bool tensor of size B, where True indicates a box is coplanar.
+    """
+    faces = torch.tensor(_box_planes, dtype=torch.int64, device=boxes.device)
+    verts = boxes.index_select(index=faces.view(-1), dim=1)
+    B = boxes.shape[0]
+    P, V = faces.shape
+    # (B, P, 4, 3) -> (B, P, 3)
+    v0, v1, v2, v3 = verts.reshape(B, P, V, 3).unbind(2)
+
+    # Compute the normal
+    e0 = F.normalize(v1 - v0, dim=-1)
+    e1 = F.normalize(v2 - v0, dim=-1)
+    normal = F.normalize(torch.cross(e0, e1, dim=-1), dim=-1)
+
+    # Check the fourth vertex is also on the same plane
+    mat1 = (v3 - v0).view(B, 1, -1)  # (B, 1, P*3)
+    mat2 = normal.view(B, -1, 1)  # (B, P*3, 1)
+    
+    return (mat1.bmm(mat2).abs() < eps).view(B)
+
+
+def _check_nonzero(boxes: torch.Tensor, eps: float = 1e-8) -> torch.BoolTensor:
+    """
+    Checks that the sides of the box have a non zero area.
+    Returns a bool tensor of size B, where True indicates a box is nonzero.
+    """
+    faces = torch.tensor(_box_triangles, dtype=torch.int64, device=boxes.device)
+    verts = boxes.index_select(index=faces.view(-1), dim=1)
+    B = boxes.shape[0]
+    T, V = faces.shape
+    # (B, T, 3, 3) -> (B, T, 3)
+    v0, v1, v2 = verts.reshape(B, T, V, 3).unbind(2)
+
+    normals = torch.cross(v1 - v0, v2 - v0, dim=-1)  # (B, T, 3)
+    face_areas = normals.norm(dim=-1) / 2
+
+    return (face_areas > eps).all(1).view(B)
+
+
+def box3d_overlap(
+    boxes_dt: torch.Tensor, boxes_gt: torch.Tensor, 
+    eps_coplanar: float = 1e-4, eps_nonzero: float = 1e-8
+) -> torch.Tensor:
+    """
+    Computes the intersection of 3D boxes_dt and boxes_gt.
+
+    Inputs boxes_dt, boxes_gt are tensors of shape (B, 8, 3)
+    (where B doesn't have to be the same for boxes_dt and boxes_gt),
+    containing the 8 corners of the boxes, as follows:
+
+        (4) +---------+. (5)
+            | ` .     |  ` .
+            | (0) +---+-----+ (1)
+            |     |   |     |
+        (7) +-----+---+. (6)|
+            ` .   |     ` . |
+            (3) ` +---------+ (2)
+
+
+    NOTE: Throughout this implementation, we assume that boxes
+    are defined by their 8 corners exactly in the order specified in the
+    diagram above for the function to give correct results. In addition
+    the vertices on each plane must be coplanar.
+    As an alternative to the diagram, this is a unit bounding
+    box which has the correct vertex ordering:
+
+    box_corner_vertices = [
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 1, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [1, 0, 1],
+        [1, 1, 1],
+        [0, 1, 1],
+    ]
+
+    Args:
+        boxes_dt: tensor of shape (N, 8, 3) of the coordinates of the 1st boxes
+        boxes_gt: tensor of shape (M, 8, 3) of the coordinates of the 2nd boxes
+    Returns:
+        iou: (N, M) tensor of the intersection over union which is
+            defined as: `iou = vol / (vol1 + vol2 - vol)`
+    """
+    # Make sure predictions are coplanar and nonzero 
+    invalid_coplanar = ~_check_coplanar(boxes_dt, eps=eps_coplanar)
+    invalid_nonzero  = ~_check_nonzero(boxes_dt, eps=eps_nonzero)
+
+    ious = _C.iou_box3d(boxes_dt, boxes_gt)[1]
+
+    # Offending boxes are set to zero IoU
+    if invalid_coplanar.any():
+        ious[invalid_coplanar] = 0
+        print('Warning: skipping {:d} non-coplanar boxes at eval.'.format(int(invalid_coplanar.float().sum())))
+    
+    if invalid_nonzero.any():
+        ious[invalid_nonzero] = 0
+        print('Warning: skipping {:d} zero volume boxes at eval.'.format(int(invalid_nonzero.float().sum())))
+
+    return ious
