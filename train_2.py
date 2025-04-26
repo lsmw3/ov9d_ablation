@@ -181,13 +181,11 @@ def main():
         'data_name': args.data_name, 
         'data_type': args.data_train,
         'feat_3d_path': args.data_3d_feat ,
-        'xyz_bin': args.nocs_bin
     }
-    dataset_kwargs['scale_size'] = args.scale_size
+    dataset_kwargs['scale_size'] = args.latent_size
 
     train_dataset = get_dataset(**dataset_kwargs)
     dataset_kwargs['data_type'] = args.data_val
-    dataset_kwargs['num_view'] = 50
     val_dataset = get_dataset(**dataset_kwargs, is_train=False)
 
     sampler_train = RandomSampler(train_dataset)

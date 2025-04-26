@@ -159,22 +159,30 @@ class OV9D(nn.Module):
         for _ in range(args.attn_depth):
             # self.attention.append(ResidualAttentionBlock(device='cuda', dtype=torch.float32, width=dino_dim, heads=8, init_scale=0.25))
             self.attention.append(ViewTransformer(width=embed_dim, attn_depth=args.attn_depth))
-
-        self.norm = nn.LayerNorm(embed_dim)
-
-        if args.dino:
-            self.decoder = Decoder_MLP(device='cuda', dtype=torch.float32, in_channel=embed_dim, out_channel=3)
-            self.img_backbone = Featup()
-            for p in self.img_backbone.parameters():
-                p.requires_grad = False
-            self.register_buffer("pixel_mean", torch.tensor((0.485, 0.456, 0.406), dtype=torch.float32).view(1, 3, 1, 1), False)
-            self.register_buffer("pixel_std", torch.tensor((0.229, 0.224, 0.225), dtype=torch.float32).view(1, 3, 1, 1), False)
-            self.dino_embed = nn.Linear(dino_dim, embed_dim)
-        else:
-            self.decoder = Decoder_MLP(device='cuda', dtype=torch.float32, in_channel=dino_dim, out_channel=3)
-            self.dino = None
         
-        self.pnp_net = ConvPnPNet(nIn=5, featdim=embed_dim, rot_dim=args.rot_dim, num_layers=6)
+        self.img_backbone = Featup()
+        for p in self.img_backbone.parameters():
+            p.requires_grad = False
+        self.register_buffer("pixel_mean", torch.tensor((0.485, 0.456, 0.406), dtype=torch.float32).view(1, 3, 1, 1), False)
+        self.register_buffer("pixel_std", torch.tensor((0.229, 0.224, 0.225), dtype=torch.float32).view(1, 3, 1, 1), False)
+
+        self.dino_embed = nn.Linear(dino_dim, embed_dim)
+        self.nocs_decoder = Decoder_MLP(device='cuda', dtype=torch.float32, in_channel=embed_dim, out_channel=3)
+
+        self.nocs_feat_mlp = nn.Sequential(
+            nn.Conv1d(3, 32, 1),
+            nn.ReLU(),
+            nn.Conv1d(32, 64, 1),
+            nn.ReLU()
+        ).to(torch.float32)
+        self.roi_2d_coord_feat_mlp = nn.Sequential(
+            nn.Conv1d(2, 32, 1),
+            nn.ReLU(),
+            nn.Conv1d(32, 64, 1),
+            nn.ReLU()
+        ).to(torch.float32)
+        
+        self.pnp_net = ConvPnPNet(nIn=64+64+embed_dim, featdim=128, rot_dim=args.rot_dim, num_layers=6)
 
         if args.decode_rt:
             self.rt_decoder = Decoder_RT(dtype=torch.float32, feat_dim=embed_dim, rot_dim=args.rot_dim, conv_dims=[128, 128, 128], mid_dims=[1024, 256, 128])
@@ -206,30 +214,26 @@ class OV9D(nn.Module):
 
             feat_roi = roi_align(
                 hr_feat, boxes,
-                output_size=(35, 35),
+                output_size=(self.args.latent_size, self.args.latent_size),
                 spatial_scale=1.0,
                 sampling_ratio=-1,
                 aligned=True
-            ) # (b, 384, 35, 35)
+            ) # (b, 384, 32, 32)
 
         # class_embeddings = self.class_embeddings[class_ids.tolist()] if class_ids is not None else self.class_embeddings
         # conv_feats = class_embeddings + self.cls_fc(class_embeddings) * self.gamma # (B, 768)
         # conv_feats = conv_feats.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, dino_feature.shape[-2], dino_feature.shape[-1]) # (B, 768, 15, 15)   
 
-        # if self.dino:
-        #     conv_feats = torch.cat([conv_feats, dino_feature], dim=1) # (B, 1024+768, 15, 15)
-
-        dino_h, dino_w = feat_roi.shape[-2:] # (35, 35)
-        hidden_feature = feat_roi.reshape(b, self.dino_dim, -1).permute(0, 2, 1) # (b, 35*35, 384)
-        hidden_feature = self.dino_embed(hidden_feature) # (b, 35*35, 128)
+        latent_h, latent_w = feat_roi.shape[-2:] # (32, 32)
+        hidden_feature = feat_roi.reshape(b, self.dino_dim, -1).permute(0, 2, 1) # (b, 32*32, 384)
+        hidden_feature = self.dino_embed(hidden_feature) # (b, 32*32, 256)
 
         if self.args.with_attn:
             for block in self.attention:
                 hidden_feature = block(hidden_feature)
 
-        conv_feats = hidden_feature.permute(0, 2, 1).reshape(b, self.embed_dim, dino_h, dino_w)
-
         if self.args.decode_rt:
+            conv_feats = hidden_feature.permute(0, 2, 1).reshape(b, self.embed_dim, latent_h, latent_w)
             pred_rot_, pred_t_, pred_dims = self.rt_decoder(conv_feats)
             if pred_rot_.shape[-1] == 4:
                 pred_rot_m = quat2mat_torch(pred_rot_) # (B, 3, 3)
@@ -240,13 +244,15 @@ class OV9D(nn.Module):
             out_dict = {'pred_r': pred_rot_m, 'pred_t': pred_t_, 'pred_dims': pred_dims}
             return out_dict
         
-        out = self.decoder(hidden_feature).permute(0, 2, 1).reshape(b, 3, dino_h, dino_w)
-        out_feat_up = F.interpolate(out, (self.args.scale_size, self.args.scale_size), mode='bicubic', align_corners=True)
+        out = self.nocs_decoder(hidden_feature.permute(0, 2, 1))
         
-        out_nocs = out
-        out_nocs_feat = out_feat_up
+        out_nocs = out.reshape(b, 3, latent_h, latent_w)
+        # out_feat_up = F.interpolate(out_nocs, (self.args.scale_size, self.args.scale_size), mode='bicubic', align_corners=True)
 
-        pnp_inp = torch.cat([out_nocs_feat, roi_coord_2d], dim=1) * mask.unsqueeze(1) # (B, c, h, w)
+        out_nocs_feat = self.nocs_feat_mlp(out) # (B, 64, 32*32)
+        roi_2d_coord_feat = self.roi_2d_coord_feat_mlp(roi_coord_2d.reshape(b, 2, -1)) # (B, 64, 32*32)
+
+        pnp_inp = torch.cat([out_nocs_feat, roi_2d_coord_feat, hidden_feature.permute(0, 2, 1)], dim=1).reshape(b, -1, latent_h, latent_w) * mask.unsqueeze(1) # (B, c, h, w)
         pred_rot_, pred_t_, pred_dims = self.pnp_net(pnp_inp) # pred_rot_ (B, 4), pred_t_ (B, 3)
         if pred_rot_.shape[-1] == 4:
             pred_rot_m = quat2mat_torch(pred_rot_) # (B, 3, 3)
@@ -255,7 +261,7 @@ class OV9D(nn.Module):
         else:
             raise ValueError(f"The dimension of pred_r as {pred_rot_.shape[-1]} is not in (4, 6)")
         
-        out_dict = {'pred_nocs_feat': out_nocs, 'pred_nocs_ori_size': out_feat_up, 'pred_r': pred_rot_m, 'pred_t': pred_t_, 'pred_dims': pred_dims}
+        out_dict = {'pred_nocs_feat': out_nocs, 'pred_r': pred_rot_m, 'pred_t': pred_t_, 'pred_dims': pred_dims}
 
         return out_dict
     
@@ -263,9 +269,9 @@ class OV9D(nn.Module):
 class Decoder_MLP(nn.Module):
     def __init__(self, device: torch.device, dtype: torch.dtype, in_channel: int, out_channel: int):
         super().__init__()
-        self.c_fc = nn.Linear(in_channel, out_channel*2, device=device, dtype=dtype)
-        self.c_mid = nn.Linear(out_channel*2, out_channel*2, device=device, dtype=dtype)
-        self.c_proj = nn.Linear(out_channel*2, out_channel, device=device, dtype=dtype)
+        self.c_fc = nn.Conv1d(in_channel, 512, 1, device=device, dtype=dtype)
+        self.c_mid = nn.Conv1d(512, 512, 1, device=device, dtype=dtype)
+        self.c_proj = nn.Conv1d(512, out_channel, 1, device=device, dtype=dtype)
         self.act = nn.LeakyReLU(0.1, inplace=True)
 
     def forward(self, x):
@@ -337,109 +343,6 @@ class Decoder_RT(nn.Module):
         return r, t, dims
 
 
-class Decoder(nn.Module):
-    def __init__(self, in_channels, out_channels, args):
-        super().__init__()
-        self.deconv = args.num_deconv
-        self.in_channels = in_channels
-
-        # import pdb; pdb.set_trace()
-        
-        self.deconv_layers = self._make_deconv_layer(
-            args.num_deconv, # 3
-            args.num_filters, # 32 32 32
-            args.deconv_kernels, # 2 2 2
-        )
-
-        self.mid_conv_layers = nn.Sequential(
-            nn.Conv2d(
-                in_channels=args.num_filters[-1],
-                out_channels=args.num_filters[-1],
-                kernel_size=3,
-                stride=1,
-                padding=1
-            ),
-            nn.BatchNorm2d(args.num_filters[-1]),
-            nn.ReLU(inplace=True)
-        )
-        
-        conv_layers = []
-        conv_layers.append(
-            build_conv_layer(
-                dict(type='Conv2d'),
-                in_channels=args.num_filters[-1],
-                out_channels=out_channels,
-                kernel_size=3,
-                stride=1,
-                padding=1))
-        conv_layers.append(
-            build_norm_layer(dict(type='BN'), out_channels)[1])
-        conv_layers.append(nn.ReLU(inplace=True))
-        self.conv_layers = nn.Sequential(*conv_layers)
-    
-
-    def forward(self, conv_feats, h, w):
-        # import pdb; pdb.set_trace()
-        out = self.deconv_layers(conv_feats)
-        out = self.mid_conv_layers(out)
-        out = F.interpolate(out, size=(h, w), mode="bicubic", align_corners=True)
-        out = self.conv_layers(out)
-
-        return out
-
-    def _make_deconv_layer(self, num_layers, num_filters, num_kernels):
-        """Make deconv layers."""
-        
-        layers = []
-        in_planes = self.in_channels
-        for i in range(num_layers):
-            kernel, padding, output_padding = \
-                self._get_deconv_cfg(num_kernels[i])
-
-            planes = num_filters[i]
-            layers.append(
-                build_upsample_layer(
-                    dict(type='deconv'),
-                    in_channels=in_planes,
-                    out_channels=planes,
-                    kernel_size=kernel,
-                    stride=2,
-                    padding=padding,
-                    output_padding=output_padding,
-                    bias=False))
-            layers.append(nn.BatchNorm2d(planes))
-            layers.append(nn.ReLU(inplace=True))
-            in_planes = planes
-
-        return nn.Sequential(*layers)
-
-    def _get_deconv_cfg(self, deconv_kernel):
-        """Get configurations for deconv layers."""
-        if deconv_kernel == 4:
-            padding = 1
-            output_padding = 0
-        elif deconv_kernel == 3:
-            padding = 1
-            output_padding = 1
-        elif deconv_kernel == 2:
-            padding = 0
-            output_padding = 0
-        else:
-            raise ValueError(f'Not supported num_kernels ({deconv_kernel}).')
-
-        return deconv_kernel, padding, output_padding
-
-    def init_weights(self):
-        """Initialize model weights."""
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                normal_init(m, std=0.001, bias=0)
-            elif isinstance(m, nn.BatchNorm2d):
-                constant_init(m, 1)
-            elif isinstance(m, nn.ConvTranspose2d):
-                normal_init(m, std=0.001)
-
-
 class ConvPnPNet(nn.Module):
     def __init__(
         self,
@@ -469,12 +372,11 @@ class ConvPnPNet(nn.Module):
             nr_steps=5000,
         )
 
-        assert num_layers >= 3, num_layers
+        assert num_layers >= 2, num_layers
         self.features = nn.ModuleList()
-        for i in range(3):
+        for i in range(2):
             _in_channels = nIn if i == 0 else featdim
-            padding = 2 if i == 2 else 1
-            self.features.append(nn.Conv2d(_in_channels, featdim, kernel_size=6, stride=4, padding=padding, bias=False, dtype=dtype))
+            self.features.append(nn.Conv2d(_in_channels, featdim, kernel_size=4, stride=2, padding=1, bias=False, dtype=dtype))
             self.features.append(nn.GroupNorm(num_gn_groups, featdim, dtype=dtype))
             self.features.append(nn.ReLU(inplace=True))
         for i in range(num_layers - 3):  # when num_layers > 3
@@ -501,13 +403,7 @@ class ConvPnPNet(nn.Module):
         Returns:
 
         """
-        bs, in_c, fh, fw = coor_feat.shape
-
         x = coor_feat
-
-        if self.drop_prob > 0:
-            self.dropblock.step()  # increment number of iterations
-            x = self.dropblock(x)
 
         for _i, layer in enumerate(self.features):
             x = layer(x)

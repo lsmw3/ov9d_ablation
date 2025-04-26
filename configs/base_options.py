@@ -39,6 +39,7 @@ class BaseOptions():
 
         parser.add_argument('--rot_dim', type=int, default=6)
         parser.add_argument('--embed_dim', type=int, default=128)
+        parser.add_argument('--latent_size', type=int, default=32)
         parser.add_argument('--scale_size',  type=int, default=490)
         
         parser.add_argument('--num_gpus', type=int, default=1)

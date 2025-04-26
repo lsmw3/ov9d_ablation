@@ -79,40 +79,30 @@ class CustomTrainer(L.LightningModule):
     
     def _step(self, batch, prex, batch_idx, log=True):
         input_scene = batch['input_scene']
-        gt_rgb = batch['image']
-        # input_rgb = batch['input_image']
-        mask = batch['mask'].to(bool)
-        mask_resized = batch['mask_resized'].to(bool)
-        # feat_3d = batch['3d_feat']
-        # feat_2d_bp = batch['pcl_model'] # (b, 480, 480, 3)
-        roi_coord_2d = batch['roi_coord_2d'] # (b, 2, 480, 480)
+        mask = batch['mask'].to(bool) # (b, 32, 32)
+        roi_coord_2d = batch['roi_coord_2d'] # (b, 2, 32, 32)
         bbox_wh = batch['bbox_size'] # (b)
         bbox_center = batch['bbox_center'] # (b, 2)
         bbox_wh_resized = batch['bbox_size_resized'] # (b)
         bbox_center_resized = batch['bbox_center_resized'] # (b, 2)
         ratio = batch['resize_ratio'].squeeze(-1) # (b)
-        nocs = batch['nocs'].permute(0, 2, 3, 1) # (b, 480, 480, 3)
-        nocs_resized = batch['nocs_resized'].permute(0, 2, 3, 1) # (b, 35, 35, 3)
-        nocs_mask = batch['nocs_mask'].to(bool) # (b, 35, 35)
-        dis_sym = batch['dis_sym']
-        con_sym = batch['con_sym']
+        nocs = batch['nocs'].permute(0, 2, 3, 1) # (b, 32, 32, 3)
+        nocs_mask = batch['nocs_mask'].to(bool) # (b, 32, 32)
         gt_r = batch['gt_r'] # (b, 3, 3)
         gt_t = batch['gt_t'] # (b, 3)
         cams = batch['cam'] # (b, 3, 3)
         gt_trans_ratio = batch["gt_trans_ratio"] # (B, 3)
 
         gt_kps_3d = batch['kps_3d_m'] # (b, 9, 3)
-        gt_model_center = batch['kps_3d_center'] # (b, 3)
-        gt_model_size = batch['kps_3d_dig'] # (b, 1)
-        gt_coord_2d = batch['gt_coord_2d'] # (b, 480, 480, h)
 
-        gt_nocs = nocs_resized
-        input_MASK = mask_resized
+        gt_nocs = nocs
+        gt_nics_vis = batch['nocs_vis'].permute(0, 2, 3, 1)
+        gt_mask_vis = batch['mask_vis']
 
         translation_ratio = 1
         gt_t = gt_t / translation_ratio
 
-        b, _, h, w = batch['image'].shape
+        b, _, _, _ = batch['input_scene'].shape
 
         # # normalize 3d points
         # feat_2d_bp_normed = []
@@ -134,7 +124,7 @@ class CustomTrainer(L.LightningModule):
                 roi_whs=bbox_wh,
                 eps=1e-8,
                 is_allo=True,
-                z_type='REL'
+                z_type='ABS'
             )
             pred_center_2d = torch.stack(
                 [
@@ -166,7 +156,7 @@ class CustomTrainer(L.LightningModule):
             bbox_3d_tgt = transform_pts_batch(gt_kps_3d[:, 1:, :], gt_r, gt_t)
             loss_pts_bind = nn.L1Loss(reduction="mean")(bbox_3d_pred, bbox_3d_tgt)
             
-            self.model_output.update({'pred_pts_3d': bbox_3d_pred})
+            self.model_output.update({'pred_pts_3d': bbox_3d_pred, 'gt_pts_3d': bbox_3d_tgt})
 
             # rotation loss
             loss_rot = angular_distance(pred_ego_rot, gt_r)
@@ -221,8 +211,9 @@ class CustomTrainer(L.LightningModule):
             return loss_total
 
 
-        pred_nocs_feat, pred_nocs_ori_size = preds['pred_nocs_feat'], preds['pred_nocs_ori_size'].permute(0, 2, 3, 1) # (b, 3, h, w), (b, H, W, 3)
+        pred_nocs_feat = preds['pred_nocs_feat'] # (b, 3, h, w)
         pred_r, pred_t, pred_dims = preds['pred_r'], preds['pred_t'], preds['pred_dims']
+        pred_nocs_vis = F.interpolate(pred_nocs_feat, (256, 256), mode='bicubic', align_corners=True).permute(0, 2, 3, 1) # (b, H, W, 3)
 
         pred_ego_rot, pred_trans = pose_from_pred_centroid_z(
             pred_r,
@@ -234,7 +225,7 @@ class CustomTrainer(L.LightningModule):
             roi_whs=bbox_wh,
             eps=1e-8,
             is_allo=True,
-            z_type='REL'
+            z_type='ABS'
         )
 
         pred_center_2d = torch.stack(
@@ -248,7 +239,7 @@ class CustomTrainer(L.LightningModule):
 
         # nocs loss
         # loss_o = L1_reg_nocs_loss(b, pred_nocs_feat.permute(0, 2, 3, 1), gt_nocs, nocs_mask, dis_sym, con_sym, self.criterion_L1)
-        loss_o = self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[nocs_mask], gt_nocs[nocs_mask]) + 0.5 * self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[~mask_resized], gt_nocs[~mask_resized])
+        loss_o = self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[nocs_mask], gt_nocs[nocs_mask]) + 0.5 * self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[~mask], gt_nocs[~mask])
         pred_nocs = pred_nocs_feat.permute(0, 2, 3, 1)
 
         # size loss
@@ -273,7 +264,7 @@ class CustomTrainer(L.LightningModule):
         bbox_3d_tgt = transform_pts_batch(gt_kps_3d[:, 1:, :], gt_r, gt_t)
         loss_pts_bind = nn.L1Loss(reduction="mean")(bbox_3d_pred, bbox_3d_tgt)
 
-        self.model_output.update({'pred_pts_3d': bbox_3d_pred})
+        self.model_output.update({'pred_pts_3d': bbox_3d_pred, 'gt_pts_3d': bbox_3d_tgt})
 
         # rotation loss
         loss_rot = angular_distance(pred_ego_rot, gt_r)
@@ -295,7 +286,7 @@ class CustomTrainer(L.LightningModule):
         # total loss
         loss_total = loss_o + loss_pm + loss_pts_bind + loss_rot + loss_trans + loss_bind + loss_centroid + loss_z + loss_sz
 
-        self.nocs_loss.update(loss_o.detach().item(), gt_rgb.size(0))
+        self.nocs_loss.update(loss_o.detach().item(), b)
 
         self.loss_dict = {
             'loss': loss_total,
@@ -317,13 +308,13 @@ class CustomTrainer(L.LightningModule):
 
             if prex == "train":
                 if 0 == self.trainer.global_step % 1000 and (self.trainer.local_rank == 0):
-                    output_vis = self.vis_images(batch, gt_nocs, nocs, pred_nocs*mask_resized.unsqueeze(-1), pred_nocs_ori_size*mask.unsqueeze(-1), mask_resized, nocs_mask, pred_ego_rot, pred_trans*translation_ratio, pred_dims)
+                    output_vis = self.vis_images(batch, gt_nocs, gt_nics_vis, pred_nocs*mask.unsqueeze(-1), pred_nocs_vis*gt_mask_vis.unsqueeze(-1), mask, nocs_mask, pred_ego_rot, pred_trans*translation_ratio, pred_dims)
                     for key, value in output_vis.items():
                         imgs = [np.concatenate([img for img in value],axis=0)]
                         self.logger.log_image(f'{prex}/{key}', imgs, step=self.global_step)
             else:
                 if 0 == self.total_val_steps % 500:
-                    output_vis = self.vis_images(batch, gt_nocs, nocs, pred_nocs*mask_resized.unsqueeze(-1), pred_nocs_ori_size*mask.unsqueeze(-1), mask_resized, nocs_mask, pred_ego_rot, pred_trans*translation_ratio, pred_dims)
+                    output_vis = self.vis_images(batch, gt_nocs, gt_nics_vis, pred_nocs*mask.unsqueeze(-1), pred_nocs_vis*gt_mask_vis.unsqueeze(-1), mask, nocs_mask, pred_ego_rot, pred_trans*translation_ratio, pred_dims)
                     for key, value in output_vis.items():
                         imgs = [np.concatenate([img for img in value],axis=0)]
                         self.logger.log_image(f'{prex}/{key}', imgs, step=self.global_step)
@@ -387,15 +378,14 @@ class CustomTrainer(L.LightningModule):
             )
 
 
-    def vis_images(self, batch, gt_nocs, nocs_ori, pred_nocs_vis, pred_nocs_ori_size_vis, mask, nocs_mask, pred_ego_rot, pred_trans, pred_dims):
+    def vis_images(self, batch, gt_nocs, gt_nocs_ori, pred_nocs_vis, pred_nocs_ori_size_vis, mask, nocs_mask, pred_ego_rot, pred_trans, pred_dims):
         outputs = {}
-        B, C, H, W = batch['image'].shape
+        B = batch['raw_scene'].shape[0]
 
         mask = mask.detach().cpu().numpy()
         nocs_mask = nocs_mask.detach().cpu().numpy()
-        gt_rgb = batch['image'].permute(0, 2, 3, 1).detach().cpu().numpy()
         gt_nocs = gt_nocs.detach().cpu().numpy()
-        nocs_ori = nocs_ori.detach().cpu().numpy()
+        gt_nocs_ori = gt_nocs_ori.detach().cpu().numpy()
         pred_nocs = pred_nocs_vis.detach().cpu().numpy()
         pred_nocs_ori_size = pred_nocs_ori_size_vis.detach().cpu().numpy()
 
@@ -435,7 +425,7 @@ class CustomTrainer(L.LightningModule):
             gt_pose = np.array(gt_pose_list)
             pred_pose = np.array(pred_pose_list)
 
-        outputs.update({"gt rgb":gt_rgb, "gt nocs":gt_nocs, "gt nocs ori": nocs_ori, "pred nocs":pred_nocs, "pred nocs ori": pred_nocs_ori_size, "mask": mask, "nocs mask": nocs_mask, "gt pose":gt_pose, "pred pose":pred_pose})
+        outputs.update({"gt nocs":gt_nocs, "gt nocs ori": gt_nocs_ori, "pred nocs":pred_nocs, "pred nocs ori": pred_nocs_ori_size, "mask": mask, "nocs mask": nocs_mask, "gt pose":gt_pose, "pred pose":pred_pose})
 
         # outputs.update({"gt rgb":gt_rgb, "gt nocs":gt_nocs, "pred nocs":pred_nocs})
 
@@ -444,9 +434,8 @@ class CustomTrainer(L.LightningModule):
     
     def vis_pose(self, batch, pred_ego_rot, pred_trans, pred_dims):
         outputs = {}
-        B, C, H, W = batch['image'].shape
+        B = batch['raw_scene'].shape[0]
 
-        gt_rgb = batch['image'].permute(0, 2, 3, 1).detach().cpu().numpy()
         kps_3d_m = batch['kps_3d_m'].detach().cpu().numpy() # (B, 9, 3)
         cams = batch['cam'].detach().cpu().numpy()
 
@@ -479,7 +468,7 @@ class CustomTrainer(L.LightningModule):
             gt_pose = np.array(gt_pose_list)
             pred_pose = np.array(pred_pose_list)
 
-        outputs.update({"gt rgb":gt_rgb, "gt pose":gt_pose, "pred pose":pred_pose})
+        outputs.update({"gt pose":gt_pose, "pred pose":pred_pose})
 
         # outputs.update({"gt rgb":gt_rgb, "gt nocs":gt_nocs, "pred nocs":pred_nocs})
 

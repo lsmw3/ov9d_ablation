@@ -11,12 +11,11 @@ import torch
 
 
 class arkitscenes_2(BaseDataset):
-    def __init__(self, data_path, data_name, data_type, feat_3d_path, xyz_bin: int=64,
-                 is_train=True, scale_size=420, num_view=50):
+    def __init__(self, data_path, data_name, data_type, feat_3d_path,
+                 is_train=True, scale_size=420):
         super().__init__()
 
         self.scale_size = scale_size
-        self.xyz_bin = xyz_bin
 
         self.is_train = is_train
         self.arkitscenes_path = os.path.join(data_path, "ARKitScenes")
@@ -152,22 +151,6 @@ class arkitscenes_2(BaseDataset):
         s = s_
         keypoints_2d = (keypoints_2d - c.reshape(1, 1, 2)) / s  # * self.scale_size
 
-        gt_coord_x = np.arange(W)
-        gt_coord_y = np.arange(H)
-        gt_coord_xy = np.asarray(np.meshgrid(gt_coord_x, gt_coord_y)).transpose(1, 2 ,0)
-        gt_coord_2d = crop_resize_by_warp_affine(gt_coord_xy, c, s, self.scale_size, interpolation=cv2.INTER_NEAREST).astype(np.float32) # HWC
-
-        dis_sym = np.zeros((3, 4, 4))
-        if 'symmetries_discrete' in object_annotation:
-            mats = np.asarray([np.asarray(mat_list).reshape(4, 4) for mat_list in object_annotation['symmetries_discrete']])
-            dis_sym[:mats.shape[0]] = mats
-        con_sym = np.zeros((3, 6))
-        if 'symmetries_continuous' in object_annotation:
-            for i, ao in enumerate(object_annotation['symmetries_continuous']):
-                axis = np.asarray(ao['axis'])
-                offset = np.asarray(ao['offset'])
-                con_sym[i] = np.concatenate([axis, offset])
-
         if self.is_train:
             rgb = self.augment_training_data(rgb.astype(np.uint8))
 
@@ -180,7 +163,6 @@ class arkitscenes_2(BaseDataset):
             'raw_scene': raw_scene.transpose((2, 0, 1)), # (3, H, W), dtype = np.uint8
             'input_scene': (scene_padded_resized.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 490, 490)
             'image': (rgb.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 490, 490)
-            'gt_coord_2d': gt_coord_2d.astype(np.float32), # (490, 490, 2)
             'bbox_size': s,
             'bbox_center': c,
             'bbox_size_resized': s_resized,
@@ -201,8 +183,6 @@ class arkitscenes_2(BaseDataset):
             'kps_3d_m': keypoints3d[0].astype(np.float32), # (9, 3)
             'kps_3d_center': keypoints3d[0, 0].astype(np.float32), # (3)
             'kps_3d_dig': np.array([diag], dtype=np.float32),
-            'dis_sym': dis_sym.astype(np.float32),
-            'con_sym': con_sym.astype(np.float32),
             'class_name': category_name,
             # '3d_feat': feat_3d.astype(np.float32) # (1024, 387)
             'img_name': frame_annotation["image_name"]

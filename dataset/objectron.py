@@ -213,19 +213,6 @@ class objectron(BaseDataset):
     
         nocs, *_ = self.zoom_in_v2(nocs_image, c, s, res=self.scale_size, interpolate=interpolate) 
 
-        # label each x, y, z channel into intergers between [0, bin-1], and the bg is bin
-        nocs_x, nocs_y, nocs_z = nocs[:, :, 0], nocs[:, :, 1], nocs[:, :, 2]
-        for nocs_plane in (nocs_x, nocs_y, nocs_z):
-            nocs_plane[nocs_plane < 0] = 0
-            nocs_plane[nocs_plane > 0.999999] = 0.999999
-        gt_x_bin = np.asarray(nocs_x * self.xyz_bin, dtype=np.uint8) # intergers interval [0, bin-1], bin is the background
-        gt_y_bin = np.asarray(nocs_y * self.xyz_bin, dtype=np.uint8)
-        gt_z_bin = np.asarray(nocs_z * self.xyz_bin, dtype=np.uint8)
-        gt_x_bin[np.logical_not(mask)] = self.xyz_bin
-        gt_y_bin[np.logical_not(mask)] = self.xyz_bin
-        gt_z_bin[np.logical_not(mask)] = self.xyz_bin
-        gt_xyz_bin = np.stack([gt_x_bin, gt_y_bin, gt_z_bin], axis=0) # (3, 480, 480)
-
         nocs[np.logical_not(mask)] = 0
         nocs_resized = np.stack([cv2.resize(nocs[..., i], (self.scale_size//14, self.scale_size//14), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
         
@@ -269,7 +256,6 @@ class objectron(BaseDataset):
         out_dict = {
             'raw_scene': raw_image.transpose((2, 0, 1)), # (3, H, W), dtype = np.uint8
             'image': (rgb.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 490, 490)
-            'gt_xyz_bin': gt_xyz_bin, # (3, H, W), dtype = np.uint8
             'gt_coord_2d': gt_coord_2d.astype(np.float32), # (490, 490, 2)
             'bbox_size': s,
             'bbox_center': c,

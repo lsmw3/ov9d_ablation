@@ -91,7 +91,6 @@ class CustomTrainer(L.LightningModule):
         nocs = batch['nocs'].permute(0, 2, 3, 1) # (b, 480, 480, 3)
         nocs_resized = batch['nocs_resized'].permute(0, 2, 3, 1) # (b, 35, 35, 3)
         nocs_mask = batch['nocs_mask'].to(bool) # (b, 35, 35)
-        gt_xyz_bin = batch['gt_xyz_bin'] # (b, 3, 480, 480)
         dis_sym = batch['dis_sym']
         con_sym = batch['con_sym']
         gt_r = batch['gt_r'] # (b, 3, 3)
@@ -166,7 +165,7 @@ class CustomTrainer(L.LightningModule):
             bbox_3d_tgt = transform_pts_batch(gt_kps_3d[:, 1:, :], gt_r, gt_t)
             loss_pts_bind = nn.L1Loss(reduction="mean")(bbox_3d_pred, bbox_3d_tgt)
             
-            self.model_output.update({'pred_pts_3d': bbox_3d_pred})
+            self.model_output.update({'pred_pts_3d': bbox_3d_pred, 'gt_pts_3d': bbox_3d_tgt})
 
             # rotation loss
             loss_rot = angular_distance(pred_ego_rot, gt_r)
@@ -256,32 +255,6 @@ class CustomTrainer(L.LightningModule):
         # loss_o = L1_reg_nocs_loss(b, pred_nocs_feat.permute(0, 2, 3, 1), gt_nocs, nocs_mask, dis_sym, con_sym, self.criterion_L1)
         loss_o = self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[nocs_mask], gt_nocs[nocs_mask]) + 0.5 * self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[~mask_resized], gt_nocs[~mask_resized])
         pred_nocs = pred_nocs_feat.permute(0, 2, 3, 1)
-        # if self.args.nocs_type == 'L1':
-        #     # loss_o = 2*self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[mask_resized], gt_nocs[mask_resized]) + 0.5*self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[~mask_resized], gt_nocs[~mask_resized])
-        #     loss_o = self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[nocs_mask], gt_nocs[nocs_mask]) + 0.5 * self.criterion_L1(pred_nocs_feat.permute(0, 2, 3, 1)[~mask_resized], gt_nocs[~mask_resized])
-        #     pred_nocs = pred_nocs_feat.permute(0, 2, 3, 1)
-        #     # loss_o = nn.L1Loss(reduction='sum')(pred_nocs*input_MASK.unsqueeze(-1), gt_nocs*input_MASK.unsqueeze(-1)) / input_MASK.sum().float().clamp(min=1.0)
-        # elif self.args.nocs_type == 'CE': # classification + regression
-        #     out_x, out_y, out_z = torch.split(pred_nocs_feat, pred_nocs_feat.shape[1] // 3, dim=1) # (b, xyz_bin, h, w)
-        #     gt_xyz_bin = gt_xyz_bin.long() # (b, 3, h, w)
-        #     loss_coord_x = self.criterion_CE(out_x * input_MASK[:, None, :, :], gt_xyz_bin[:, 0] * input_MASK.long(), input_MASK) / input_MASK.sum().float().clamp(min=1.0)
-        #     loss_coord_y = self.criterion_CE(out_y * input_MASK[:, None, :, :], gt_xyz_bin[:, 1] * input_MASK.long(), input_MASK) / input_MASK.sum().float().clamp(min=1.0)
-        #     loss_coord_z = self.criterion_CE(out_z * input_MASK[:, None, :, :], gt_xyz_bin[:, 2] * input_MASK.long(), input_MASK) / input_MASK.sum().float().clamp(min=1.0)
-        #     loss_classification = loss_coord_x + loss_coord_y + loss_coord_z
-
-        #     pred_nocs = torch.zeros_like(batch['nocs']).to(batch['nocs']) # (b, 3, h, w)
-        #     x_grid = self.x_grid_center.unsqueeze(0).unsqueeze(1).unsqueeze(1).expand(b, h, w, -1) # (b, h, w, xyz_bin)
-        #     y_grid = self.y_grid_center.unsqueeze(0).unsqueeze(1).unsqueeze(1).expand(b, h, w, -1) # (b, h, w, xyz_bin)
-        #     z_grid = self.z_grid_center.unsqueeze(0).unsqueeze(1).unsqueeze(1).expand(b, h, w, -1) # (b, h, w, xyz_bin)
-        #     for b_i in range(b):
-        #         pred_nocs[b_i][0] = x_grid[b_i][torch.arange(h)[:, None], torch.arange(w), gt_xyz_bin[b_i, 0]]
-        #         pred_nocs[b_i][1] = y_grid[b_i][torch.arange(h)[:, None], torch.arange(w), gt_xyz_bin[b_i, 1]]
-        #         pred_nocs[b_i][2] = z_grid[b_i][torch.arange(h)[:, None], torch.arange(w), gt_xyz_bin[b_i, 2]]
-        #     pred_nocs = ((pred_nocs + pred_nocs_offset)).permute(0, 2, 3, 1)
-        #     loss_regression = L1_reg_nocs_loss(b, pred_nocs, nocs, input_MASK, dis_sym, con_sym, self.criterion_L1)
-        #     loss_o = 0.1*loss_classification + loss_regression
-        # else:
-        #     raise ValueError("The nocs type should be either CE of L1.")
         
         # # self-supervision loss
         # pred_nocs_ori_size = pred_nocs_feat_ori_size.permute(0, 2, 3, 1) if pred_nocs_feat_ori_size is not None else pred_nocs
@@ -316,7 +289,7 @@ class CustomTrainer(L.LightningModule):
         bbox_3d_tgt = transform_pts_batch(gt_kps_3d[:, 1:, :], gt_r, gt_t)
         loss_pts_bind = nn.L1Loss(reduction="mean")(bbox_3d_pred, bbox_3d_tgt)
 
-        self.model_output.update({'pred_pts_3d': bbox_3d_pred})
+        self.model_output.update({'pred_pts_3d': bbox_3d_pred, 'gt_pts_3d': bbox_3d_tgt})
 
         # rotation loss
         loss_rot = angular_distance(pred_ego_rot, gt_r)
