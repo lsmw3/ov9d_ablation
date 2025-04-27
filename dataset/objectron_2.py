@@ -12,11 +12,12 @@ import torch
 
 
 class objectron_2(BaseDataset):
-    def __init__(self, data_path, data_name, data_type, feat_3d_path,
+    def __init__(self, data_path, data_name, data_type, feat_3d_path, virtual_focal,
                  is_train=True, scale_size=420):
         super().__init__()
 
         self.scale_size = scale_size
+        self.virtual_focal = virtual_focal
 
         self.is_train = is_train
         self.objectron_path = os.path.join(data_path, "objectron_origin")
@@ -110,18 +111,18 @@ class objectron_2(BaseDataset):
 
         cam_R_m2c, cam_t_m2c, obj_id = object_annotation['rotation'], object_annotation['translation'], object_annotation['object_id']
         cam_R_m2c = np.asarray(cam_R_m2c).reshape(3, 3)
-        cam_t_m2c = np.asarray(cam_t_m2c).reshape(1, 1, 3)
-        keypoints3d = self.get_keypoints(object_annotation) # key points in 3d model frame
+        cam_t_m2c = np.asarray(cam_t_m2c).reshape(1, 3)
+        keypoints_3d = self.get_kpt_3d(object_annotation) # key points in 3d model frame
+        diag = np.linalg.norm(keypoints_3d[1] - keypoints_3d[8])
 
-        diag = np.linalg.norm(keypoints3d[0, 1] - keypoints3d[0, 8])
-        keypoints_2d = (keypoints3d @ cam_R_m2c.T + cam_t_m2c) @ cam_K.T # n * 9 * 3, key points on 2d pixel plane
-        obj_z_gt = keypoints_2d[0, 0, 2] # depth of model centroid in camera frame
-        keypoints_2d = keypoints_2d[..., 0:2] / keypoints_2d[..., 2:] # n * 9 * 2, homogeneous 2d key points coordinates
-        obj_centroid_2d = keypoints_2d[0, 0, :2]
+        keypoints_2d = self.get_kpt_2d(keypoints_3d, cam_R_m2c, cam_t_m2c, cam_K) # (9, 3), key points on 2d pixel plane
+        # obj_z_gt = keypoints_2d[0, 2] # depth of model centroid in camera frame
+        keypoints_2d = keypoints_2d[..., 0:2] / keypoints_2d[..., 2:] # (9, 2), homogeneous 2d key points coordinates
+        # obj_centroid_2d = keypoints_2d[0, :2]
 
-        bbox = [np.min(keypoints_2d[0, :, 0]), np.min(keypoints_2d[0, :, 1]), 
-                np.max(keypoints_2d[0, :, 0])-np.min(keypoints_2d[0, :, 0]),
-                np.max(keypoints_2d[0, :, 1])-np.min(keypoints_2d[0, :, 1])]
+        bbox = [np.min(keypoints_2d[:, 0]), np.min(keypoints_2d[:, 1]), 
+                np.max(keypoints_2d[:, 0])-np.min(keypoints_2d[:, 0]),
+                np.max(keypoints_2d[:, 1])-np.min(keypoints_2d[:, 1])]
 
         rgb_path = frame_annotation["image_name"] + '.png'
         mask_path = frame_annotation["omninocs_name"] + '_instances.png'
@@ -155,26 +156,32 @@ class objectron_2(BaseDataset):
             W = 360
 
         raw_scene = image.copy()
-        scene_padded_resized, bbox_resized = self.pad_and_resize_with_bbox_adjustment(raw_scene, bbox)
+        scene_padded_resized, bbox_resized, cam_K_resized, mask_resized, nocs_resized, scale_ratio = self.preprocess(raw_scene, bbox, cam_K, mask, nocs_image)
 
-        image[mask != frame_info["object_id"]] = 0 # remove background
+        keypoints_2d_resized = self.get_kpt_2d(keypoints_3d, cam_R_m2c, cam_t_m2c, cam_K_resized) # (9, 3), key points on 2d pixel plane
+        obj_z_gt = keypoints_2d_resized[0, 2] # depth of model centroid in camera frame
+        keypoints_2d_resized = keypoints_2d_resized[..., 0:2] / keypoints_2d_resized[..., 2:] # (9, 2), homogeneous 2d key points coordinates
+        obj_centroid_2d_resized = keypoints_2d_resized[0, :2]
 
-        c, s = self.xywh2cs(bbox)
-        c_resized, s_resized = self.xywh2cs(bbox_resized)
+        # c, s = self.xywh2cs(bbox)
+        c, s = self.xywh2cs(bbox_resized)
+
+        initial_focal = (cam_K[0, 0] + cam_K[1, 1]) / 2
+        focal_ratio = initial_focal / self.virtual_focal
+
+        ratio_scalar = scale_ratio * focal_ratio
 
         # relative translation offset from the bbox centeroid to object centroid on 2d pixel plane
-        delta_c = obj_centroid_2d - c
-        trans_ratio = np.asarray([delta_c[0] / s, delta_c[1] / s, obj_z_gt]).astype(np.float32)
+        delta_c = obj_centroid_2d_resized - c
+        trans_ratio = np.asarray([delta_c[0] / s, delta_c[1] / s, obj_z_gt / ratio_scalar]).astype(np.float32)
         
-        interpolate = cv2.INTER_NEAREST
-        # interpolate = cv2.INTER_LINEAR
-        rgb, c_h_, c_w_, s_, roi_coord_2d = self.zoom_in_v2(image, c, s, res=self.scale_size, return_roi_coord=True) # center-cropped rgb
+        rgb, c_h_, c_w_, s_, roi_coord_2d = self.zoom_in_v2(scene_padded_resized, c, s, res=self.scale_size, return_roi_coord=True) # center-cropped rgb
         
-        mask, *_ = self.zoom_in_v2(mask, c, s, res=self.scale_size, interpolate=interpolate) # center-cropped mask
+        mask, *_ = self.zoom_in_v2(mask_resized, c, s, res=self.scale_size, interpolate=cv2.INTER_NEAREST) # center-cropped mask
         mask = (mask == frame_info["object_id"])
         rgb[mask[:, :, None] != [True, True, True]] = 0 # further align the background, especially in case the cropped rgb is outside the boundary of raw image
     
-        nocs, *_ = self.zoom_in_v2(nocs_image, c, s, res=self.scale_size, interpolate=interpolate)
+        nocs, *_ = self.zoom_in_v2(nocs_resized, c, s, res=self.scale_size)
 
         nocs[np.logical_not(mask)] = 0
         mask[np.sum(np.logical_or(nocs > 1, nocs < 0), axis=-1) != 0] = False
@@ -195,21 +202,20 @@ class objectron_2(BaseDataset):
             'input_scene': (scene_padded_resized.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 490, 490)
             'bbox_size': s,
             'bbox_center': c,
-            'bbox_size_resized': s_resized,
-            'bbox_center_resized': c_resized,
-            'gt_bbox_2d': np.array(bbox).astype(np.float32), # (4,)
+            'gt_bbox_2d': np.array(bbox_resized).astype(np.float32), # (4,)
             'roi_coord_2d': roi_coord_2d.astype(np.float32), # (2, 32, 32)
             'gt_r': cam_R_m2c.astype(np.float32),
             'gt_t': cam_t_m2c.reshape(-1).astype(np.float32),
-            'cam': cam_K.astype(np.float32),
-            'resize_ratio': np.array([self.scale_size / s], dtype=np.float32),
+            'cam_K': cam_K.astype(np.float32),
+            'cam_K_resized': cam_K_resized.astype(np.float32),
+            'resize_ratio': np.array([ratio_scalar], dtype=np.float32),
             'gt_trans_ratio': trans_ratio.reshape(-1).astype(np.float32),
             'mask': mask, # (32, 32)
             'nocs': nocs.transpose((2, 0, 1)).astype(np.float32), # (3, 32, 32)
             'nocs_mask': nocs_mask[:, :, 0], # (32, 32)
             'nocs_vis': nocs_vis.transpose((2, 0, 1)).astype(np.float32), # (3, 256, 256)
             'mask_vis': mask_vis, # (256, 256)
-            'kps_3d_m': keypoints3d[0].astype(np.float32), # (9, 3)
+            'kps_3d_m': keypoints_3d.astype(np.float32), # (9, 3)
             'class_name': category_name,
             # '3d_feat': feat_3d.astype(np.float32) # (1024, 387)
             'img_name': frame_annotation["image_name"]
@@ -217,8 +223,12 @@ class objectron_2(BaseDataset):
 
         return out_dict
 
+    def get_kpt_2d(self, kpt_3d, R_m2c, t_m2c, K):
+        kpt_2d = (kpt_3d @ R_m2c.T + t_m2c) @ K.T
+        return kpt_2d
+
     @staticmethod
-    def get_keypoints(object_annotation, dt=5):
+    def get_kpt_3d(object_annotation):
         size = object_annotation["size"]
 
         # Define 3D bounding box in object space
@@ -227,25 +237,6 @@ class objectron_2(BaseDataset):
             [0.0, 0.0, 0.0], [-l, -w, -h], [-l, -w, h], [-l, w, -h], [-l, w, h],  
             [l, -w, -h], [l, -w, h], [l, w, -h], [l, w, h]      
         ])
-        keypoints = [keypoints]
-        if 'symmetries_discrete' in object_annotation:
-            mats = [np.asarray(mat_list).reshape(4, 4) for mat_list in object_annotation['symmetries_discrete']]
-            for mat in mats:
-                curr = keypoints[0] @ mat[0:3, 0:3].T + mat[0:3, 3:].T
-                keypoints.append(curr)
-        elif 'symmetries_continuous' in object_annotation:
-            # todo: consider multiple symmetries
-            ao = object_annotation['symmetries_continuous'][0]
-            axis = np.asarray(ao['axis'])
-            offset = np.asarray(ao['offset'])
-            angles = np.deg2rad(np.arange(dt, 180, dt))
-            rotvecs = axis.reshape(1, 3) * angles.reshape(-1, 1)
-            # https://en.wikipedia.org/wiki/Axis%E2%80%93angle_representation#Rotation_vector
-            rots = R.from_rotvec(rotvecs).as_matrix()
-            for rot in rots:
-                curr = keypoints[0] @ rot.T + offset.reshape(1, 3)
-                keypoints.append(curr)
-        keypoints = np.stack(keypoints, axis=0)
         return keypoints
 
     @staticmethod
@@ -356,13 +347,16 @@ class objectron_2(BaseDataset):
 
         return im_crop, c_h, c_w, s
     
-    def pad_and_resize_with_bbox_adjustment(self, image, bbox, target_size=(490, 490)):
+    def preprocess(self, image, bbox, K, mask, nocs, target_size=(490, 490)):
         """
         Pad image to square and resize while adjusting bounding boxes
         
         Args:
             image: numpy array of shape (H, W, 3)
             bboxes: list of [x, y, w, h] coordinates in original image
+            K: initial camera instrinsic
+            mask: numpy array of shape (H, W)
+            nocs: numpy array of shape (H, W, 3)
             target_size: desired output size (height, width)
         
         Returns:
@@ -374,11 +368,20 @@ class objectron_2(BaseDataset):
         
         # Create a square black canvas
         padded_img = np.zeros((max_dim, max_dim, 3), dtype=np.uint8)
+        padded_mask = np.zeros((max_dim, max_dim), dtype=mask.dtype)
+        padded_nocs = np.zeros((max_dim, max_dim, 3), dtype=nocs.dtype)
         
         # Paste original image onto canvas (centered)
         pad_top = (max_dim - H) // 2
         pad_left = (max_dim - W) // 2
+
         padded_img[pad_top:pad_top+H, pad_left:pad_left+W, :] = image
+        padded_mask[pad_top:pad_top+H, pad_left:pad_left+W] = mask
+        padded_nocs[pad_top:pad_top+H, pad_left:pad_left+W, :] = nocs
+
+        K_pad = K.copy()
+        K_pad[0,2] += pad_left
+        K_pad[1,2] += pad_top
         
         # Calculate scale factor for resizing
         scale_factor = target_size[0] / max_dim
@@ -401,9 +404,16 @@ class objectron_2(BaseDataset):
         h_adj = h_padded * scale_factor
             
         adjusted_bboxes = np.array([x_adj, y_adj, w_adj, h_adj])
+
+        K_resized = K_pad.copy()
+        K_resized[0,:] *= scale_factor
+        K_resized[1,:] *= scale_factor
         
-        # Resize image
-        padded_resized_img = Image.fromarray(padded_img).resize(target_size, Image.BILINEAR)
-        padded_resized_img = np.array(padded_resized_img)
+        # Resize images
+        S_h, S_w = target_size
+        padded_resized_img = cv2.resize(padded_img, (S_w, S_h), interpolation=cv2.INTER_LINEAR)
+        padded_resized_mask = cv2.resize(padded_mask, (S_w, S_h), interpolation=cv2.INTER_NEAREST)
+        padded_resized_nocs = cv2.resize(padded_nocs, (S_w, S_h), interpolation=cv2.INTER_LINEAR)
+
         
-        return padded_resized_img, adjusted_bboxes
+        return padded_resized_img, adjusted_bboxes, K_resized, padded_resized_mask, padded_resized_nocs, scale_factor
