@@ -7,113 +7,72 @@ from scipy.stats import truncnorm
 from scipy.spatial.transform import Rotation as R
 from dataset.base_dataset import BaseDataset
 from utils.utils import get_2d_coord_np, crop_resize_by_warp_affine, get_coarse_mask
-import torch
 import zipfile
+import torch
 
 
-class multiscene_2(BaseDataset):
+class objectron_3(BaseDataset):
     def __init__(self, data_path, data_name, data_type, feat_3d_path, virtual_focal,
-                 is_train=True, scale_size=420):
+                 is_train=True, scale_size=490, latent_size=32):
         super().__init__()
 
         self.scale_size = scale_size
+        self.latent_size = latent_size
         self.virtual_focal = virtual_focal
 
         self.is_train = is_train
+        self.objectron_path = os.path.join(data_path, "objectron_origin")
+        self.omninocs_objectron_path = os.path.join(data_path, "omninocs_release_objectron")
+        self.omninocs_annotation_path = os.path.join(self.omninocs_objectron_path, "seperate_annotation")
+        with open(os.path.join(self.omninocs_objectron_path, "frame_mask_obj_list.json"), 'r') as f:
+            self.omninocs_frame_mask_obj_list = json.load(f)
+
+        # # Load zip file
+        # self.rgb_data_zip_list = {}
+        # for file in os.listdir(self.objectron_path):
+        #     if file.endswith('.zip'):
+        #         category_name = file.split('.')[0]
+        #         self.rgb_data_zip_list[category_name] = zipfile.ZipFile(os.path.join(self.objectron_path, file), 'r')
+        # self.omninocs_zip_data = zipfile.ZipFile(os.path.join(self.omninocs_objectron_path, 'objectron.zip'), 'r')
+        
+        self.rgb_data_zip_paths = {
+            file.split('.')[0]: os.path.join(self.objectron_path, file)
+            for file in os.listdir(self.objectron_path) if file.endswith('.zip')
+        }
+        self.omninocs_zip_path = os.path.join(self.omninocs_objectron_path, 'objectron.zip')
+        # Cache for storing ZIP files per worker
+        self._worker_zip_cache = {}
+
         self.data_list = []
-        
-        self.objectron_path = os.path.join(data_path, "Objectron/objectron_origin")
-        self.omninocs_objectron_path = os.path.join(data_path, "Objectron/omninocs_release_objectron")
-        self.omninocs_annotation_objectron_path = os.path.join(self.omninocs_objectron_path, "seperate_annotation")
-        # with open(os.path.join(self.omninocs_objectron_path, "frame_mask_obj_list.json"), 'r') as f:
-        #     self.omninocs_frame_mask_obj_list_objectron = json.load(f)
-        
-        self.hypersim_path = os.path.join(data_path, "Hypersim/hypersim")
-        self.omninocs_hypersim_path = os.path.join(data_path, "Hypersim/omninocs_release_hypersim")
-        self.omninocs_annotation_hypersim_path = os.path.join(self.omninocs_hypersim_path, "seperate_annotation")
-        # with open(os.path.join(self.omninocs_hypersim_path, "frame_mask_obj_list.json"), 'r') as f:
-        #     self.omninocs_frame_mask_obj_list_hypersim = json.load(f)
-        
-        self.arkitscenes_path = os.path.join(data_path, "ARKitScenes/ARKitScenes")
-        self.omninocs_arkitscenes_path = os.path.join(data_path, "ARKitScenes/omninocs_release_ARKitScenes")
-        self.omninocs_annotation_arkitscenes_path = os.path.join(self.omninocs_arkitscenes_path, "seperate_annotation")
-        # with open(os.path.join(self.omninocs_arkitscenes_path, "frame_mask_obj_list.json"), 'r') as f:
-        #     self.omninocs_frame_mask_obj_list_arkitscenes = json.load(f)
-            
-        for dataset_type in ["objectron", "hypersim", "arkitscenes"]:
-            if dataset_type == "objectron":
-                self.rgb_data_zip_paths = {
-                    file.split('.')[0]: os.path.join(self.objectron_path, file)
-                    for file in os.listdir(self.objectron_path) if file.endswith('.zip')
-                }
-                self.omninocs_zip_path = os.path.join(self.omninocs_objectron_path, 'objectron.zip')
-                self._worker_zip_cache = {}
-                with open(f"dataset_collect/objectron_valid_instances_{data_type}.json", "r") as f:
-                    valid_instances_objectron = json.load(f)
 
-                for valid_instance in valid_instances_objectron:
-                    scene_id = valid_instance["scene_id"]
-                    scene_path = os.path.join(self.omninocs_annotation_objectron_path, scene_id)
-                    object_id = valid_instance["object_id"]
-                    object_json = f"{object_id}.json"
-                    with open(os.path.join(scene_path, object_json), 'r') as f:
-                        omninocs_annotation_list_of_object = json.load(f)
-                    frame = omninocs_annotation_list_of_object[valid_instance["frame_idx"]]
-                    info_dict = {
-                        'dataset': 'objectron',
-                        'scene': scene_id,
-                        'annotation': frame,
-                        'object_id': object_id
-                    }
-                    self.data_list.append(info_dict)
-                    
-            if dataset_type == "hypersim":
-                with open(f"dataset_collect/hypersim_valid_instances_{data_type}.json", "r") as f:
-                    valid_instances_hypersim = json.load(f)
-                    
-                for valid_instance in valid_instances_hypersim:
-                    scene_id = valid_instance["scene_id"]
-                    scene_path = os.path.join(self.omninocs_annotation_hypersim_path, scene_id)
-                    object_id = valid_instance["object_id"]
-                    object_json = f"{object_id}.json"
-                    with open(os.path.join(scene_path, object_json), 'r') as f:
-                        omninocs_annotation_list_of_object = json.load(f)
-                    frame = omninocs_annotation_list_of_object[valid_instance["frame_idx"]]
-                    info_dict = {
-                        'dataset': 'hypersim',
-                        'scene': scene_id,
-                        'annotation': frame,
-                        'object_id': object_id
-                    }
-                    self.data_list.append(info_dict)
-            
-            if dataset_type == "arkitscenes":
-                with open(f"dataset_collect/arkitscenes_valid_instances_{data_type}.json", "r") as f:
-                    valid_instances = json.load(f)
+        with open(f"dataset_collect/objectron_valid_instances_{data_type}.json", "r") as f:
+            valid_instances = json.load(f)
 
-                for valid_instance in valid_instances:
-                    scene_id = valid_instance["scene_id"]
-                    scene_path = os.path.join(self.omninocs_annotation_arkitscenes_path, scene_id)
-                    object_id = valid_instance["object_id"]
-                    object_json = f"{object_id}.json"
-                    with open(os.path.join(scene_path, object_json), 'r') as f:
-                        omninocs_annotation_list_of_object = json.load(f)
-                    frame = omninocs_annotation_list_of_object[valid_instance["frame_idx"]]
-                    info_dict = {
-                        'dataset': 'arkitscenes',
-                        'scene': scene_id,
-                        'annotation': frame,
-                        'object_id': object_id
-                    }
-                    self.data_list.append(info_dict)
+        for valid_instance in valid_instances:
+            scene_id = valid_instance["scene_id"]
+            scene_path = os.path.join(self.omninocs_annotation_path, scene_id)
+
+            object_id = valid_instance["object_id"]
+            object_json = f"{object_id}.json"
+            with open(os.path.join(scene_path, object_json), 'r') as f:
+                omninocs_annotation_list_of_object = json.load(f)
+
+            frame = omninocs_annotation_list_of_object[valid_instance["frame_idx"]]
+            info_dict = {
+                'scene': scene_id,
+                'annotation': frame,
+                'object_id': object_id
+            }
+
+            self.data_list.append(info_dict)
         
         phase = 'train' if is_train else 'test'
-        print("Dataset: OmniNOCS MultiScene")
+        print("Dataset: OmniNOCS Objectron")
         print("# of %s images: %d" % (phase, len(self.data_list)))
 
     def __len__(self):
         return len(self.data_list)
-    
+
     def _get_worker_zip(self):
         """Ensure each worker opens its own ZIP file once and keeps it open."""
         worker_info = torch.utils.data.get_worker_info()
@@ -134,8 +93,9 @@ class multiscene_2(BaseDataset):
 
     def __getitem__(self, idx):
         frame_info = self.data_list[idx]
+        # scene, view, cam, gt, gt_info, meta, feat_3d = info['scene'], info['view'], info['cam'], info['gt'], info['gt_info'], info['meta'], info['3d_feat']
         frame_annotation = frame_info['annotation']
-        category_name = frame_annotation["objects"][0]["category"]
+        category_name = frame_annotation['image_name'].split('/')[0]
 
         cam_K = [
             frame_annotation["intrinsics"]["fx"], 0.0, frame_annotation["intrinsics"]["cx"],
@@ -154,104 +114,82 @@ class multiscene_2(BaseDataset):
         cam_R_m2c = np.asarray(cam_R_m2c).reshape(3, 3)
         cam_t_m2c = np.asarray(cam_t_m2c).reshape(1, 3)
         keypoints_3d = self.get_kpt_3d(object_annotation) # key points in 3d model frame
-
         diag = np.linalg.norm(keypoints_3d[1] - keypoints_3d[8])
-        keypoints_2d = self.get_kpt_2d(keypoints_3d, cam_R_m2c, cam_t_m2c, cam_K) # 9 * 3, key points on 2d pixel plane
-        # obj_z_gt = keypoints_2d[0, 2] # depth of model centroid in camera frame
-        keypoints_2d = keypoints_2d[..., 0:2] / keypoints_2d[..., 2:] # 9 * 2, homogeneous 2d key points coordinates
-        # obj_centroid_2d = keypoints_2d[0, :2]
+
+        keypoints_2d = self.get_kpt_2d(keypoints_3d, cam_R_m2c, cam_t_m2c, cam_K) # (9, 3), key points on 2d pixel plane
+        obj_z_gt = keypoints_2d[0, 2] # depth of model centroid in camera frame
+        keypoints_2d = keypoints_2d[..., 0:2] / keypoints_2d[..., 2:] # (9, 2), homogeneous 2d key points coordinates
+        obj_centroid_2d = keypoints_2d[0, :2]
 
         bbox = [np.min(keypoints_2d[:, 0]), np.min(keypoints_2d[:, 1]), 
                 np.max(keypoints_2d[:, 0])-np.min(keypoints_2d[:, 0]),
                 np.max(keypoints_2d[:, 1])-np.min(keypoints_2d[:, 1])]
 
-        rgb_path = frame_annotation["image_name"]
+        rgb_path = frame_annotation["image_name"] + '.png'
         mask_path = frame_annotation["omninocs_name"] + '_instances.png'
         nocs_path = frame_annotation["omninocs_name"] + '_nocs.png'
         
-        if frame_info["dataset"] == "objectron":
-            category_name = frame_annotation['image_name'].split('/')[0]
-            rgb_path = frame_annotation["image_name"] + '.png'
-            zip_files = self._get_worker_zip()
-            with zip_files[category_name].open(rgb_path) as rgb_file:
-                image = np.frombuffer(rgb_file.read(), np.uint8)
-                image = cv2.imdecode(image, cv2.IMREAD_COLOR)
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            H, W = image.shape[:2]
-            with zip_files["omninocs"].open(mask_path) as mask_file:
-                mask = np.frombuffer(mask_file.read(), np.uint8)
-                mask = cv2.imdecode(mask, cv2.IMREAD_UNCHANGED)
-            with zip_files["omninocs"].open(nocs_path) as nocs_file:
-                nocs_image = np.frombuffer(nocs_file.read(), np.uint8)
-                nocs_image = cv2.imdecode(nocs_image, cv2.IMREAD_COLOR).astype(np.float32) / 255.0
-            if W != 360:
-                pad_width = 360 - W  # Amount of padding needed on the right
-                image = np.pad(image, ((0, 0), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
-                mask = np.pad(mask, ((0, 0), (0, pad_width)), mode='constant', constant_values=0)
-                nocs_image = np.pad(nocs_image, ((0, 0), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
-                W = 360
-        
-        if frame_info["dataset"] == "hypersim":
-            image = cv2.imread(os.path.join(self.hypersim_path, rgb_path), cv2.IMREAD_COLOR)
+        # Get worker-specific ZIP files
+        zip_files = self._get_worker_zip()
+
+        # with self.rgb_data_zip_list[category_name].open(rgb_path) as rgb_file:
+        with zip_files[category_name].open(rgb_path) as rgb_file:
+            image = np.frombuffer(rgb_file.read(), np.uint8)
+            image = cv2.imdecode(image, cv2.IMREAD_COLOR)
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            H, W = image.shape[:2]
-            
-            mask = cv2.imread(os.path.join(self.omninocs_hypersim_path, mask_path), cv2.IMREAD_UNCHANGED)
-
-            nocs_image = cv2.imread(os.path.join(self.omninocs_hypersim_path, nocs_path), cv2.IMREAD_COLOR)
-            nocs_image = cv2.cvtColor(nocs_image, cv2.COLOR_BGR2RGB)
-            nocs_image = nocs_image.astype(np.float32) / 255.0
+        H, W = image.shape[:2]
         
-        if frame_info["dataset"] == "arkitscenes":
-            image = cv2.imread(os.path.join(self.arkitscenes_path, rgb_path), cv2.IMREAD_COLOR)
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            H, W = image.shape[:2]
+        # with self.omninocs_zip_data.open(mask_path) as mask_file:
+        with zip_files["omninocs"].open(mask_path) as mask_file:
+            mask = np.frombuffer(mask_file.read(), np.uint8)
+            mask = cv2.imdecode(mask, cv2.IMREAD_UNCHANGED)
 
-            mask_raw = cv2.imread(os.path.join(self.omninocs_arkitscenes_path, mask_path), cv2.IMREAD_UNCHANGED)
-
-            nocs_image_raw = cv2.imread(os.path.join(self.omninocs_arkitscenes_path, nocs_path), cv2.IMREAD_COLOR)
-            nocs_image_raw = cv2.cvtColor(nocs_image_raw, cv2.COLOR_BGR2RGB)
-            nocs_image_raw = nocs_image_raw.astype(np.float32) / 255.0
+        # with self.omninocs_zip_data.open(nocs_path) as nocs_file:
+        with zip_files["omninocs"].open(nocs_path) as nocs_file:
+            nocs_image = np.frombuffer(nocs_file.read(), np.uint8)
+            nocs_image = cv2.imdecode(nocs_image, cv2.IMREAD_COLOR).astype(np.float32) / 255.0
             
-            mask = cv2.resize(mask_raw, (W, H), cv2.INTER_NEAREST)
-            nocs_image = np.stack([cv2.resize(nocs_image_raw[..., i], (W, H), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
-        
+        if W != 360:
+            pad_width = 360 - W  # Amount of padding needed on the right
+            image = np.pad(image, ((0, 0), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
+            mask = np.pad(mask, ((0, 0), (0, pad_width)), mode='constant', constant_values=0)
+            nocs_image = np.pad(nocs_image, ((0, 0), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
+            W = 360
+
         raw_scene = image.copy()
         scene_padded_resized, bbox_resized, cam_K_resized, mask_resized, nocs_resized, scale_ratio = self.preprocess(raw_scene, bbox, cam_K, mask, nocs_image)
 
-        keypoints_2d_resized = self.get_kpt_2d(keypoints_3d, cam_R_m2c, cam_t_m2c, cam_K_resized) # (9, 3), key points on 2d pixel plane
-        obj_z_gt = keypoints_2d_resized[0, 2] # depth of model centroid in camera frame
-        keypoints_2d_resized = keypoints_2d_resized[..., 0:2] / keypoints_2d_resized[..., 2:] # (9, 2), homogeneous 2d key points coordinates
-        obj_centroid_2d_resized = keypoints_2d_resized[0, :2]
+        image[mask != frame_info["object_id"]] = 0 # remove background
 
-        c, s = self.xywh2cs(bbox_resized)
+        c, s = self.xywh2cs(bbox)
+        c_resized, s_resized = self.xywh2cs(bbox_resized)
 
-        initial_focal = (cam_K[0, 0] + cam_K[1, 1]) / 2
-        focal_ratio = initial_focal / self.virtual_focal
-
-        ratio_scalar = scale_ratio * focal_ratio
+        # initial_focal = (cam_K[0, 0] + cam_K[1, 1]) / 2
+        # focal_ratio = initial_focal / self.virtual_focal
+        # ratio_scalar = scale_ratio * focal_ratio
 
         # relative translation offset from the bbox centeroid to object centroid on 2d pixel plane
-        delta_c = obj_centroid_2d_resized - c
-        trans_ratio = np.asarray([delta_c[0] / s, delta_c[1] / s, obj_z_gt / ratio_scalar]).astype(np.float32)
+        delta_c = obj_centroid_2d - c
+        trans_ratio = np.asarray([delta_c[0] / s, delta_c[1] / s, obj_z_gt / (self.scale_size / s)]).astype(np.float32)
         
-        rgb, c_h_, c_w_, s_, roi_coord_2d = self.zoom_in_v2(scene_padded_resized, c, s, res=self.scale_size, return_roi_coord=True) # center-cropped rgb
+        rgb, c_h_, c_w_, s_, roi_coord_2d = self.zoom_in_v2(image, c, s, res=self.scale_size, return_roi_coord=True) # (490, 490, c)
         
-        mask, *_ = self.zoom_in_v2(mask_resized, c, s, res=self.scale_size, interpolate=cv2.INTER_NEAREST) # center-cropped mask
+        mask, *_ = self.zoom_in_v2(mask, c, s, res=self.scale_size, interpolate=cv2.INTER_NEAREST) # (490, 490)
+        mask_latent, *_ = self.zoom_in_v2(mask_resized, c_resized, s_resized, res=self.latent_size, interpolate=cv2.INTER_NEAREST) # (32, 32)
         mask = (mask == frame_info["object_id"])
+        mask_latent = (mask_latent == frame_info["object_id"])
         rgb[mask[:, :, None] != [True, True, True]] = 0 # further align the background, especially in case the cropped rgb is outside the boundary of raw image
     
-        nocs, *_ = self.zoom_in_v2(nocs_resized, c, s, res=self.scale_size)
+        nocs, *_ = self.zoom_in_v2(nocs_image, c, s, res=self.scale_size) # (490, 490, 3)
+        nocs_latent, *_ = self.zoom_in_v2(nocs_resized, c_resized, s_resized, res=self.latent_size) # (32, 32, 3)
 
         nocs[np.logical_not(mask)] = 0
         mask[np.sum(np.logical_or(nocs > 1, nocs < 0), axis=-1) != 0] = False
-    
-        mask_vis = get_coarse_mask(mask, scale_factor=8)
-        nocs_vis = np.stack([cv2.resize(nocs[..., i], (256, 256), interpolation=cv2.INTER_CUBIC) for i in range(3)], axis=-1)
-        nocs_vis[np.logical_not(mask_vis)] = 0
+        nocs_latent[np.logical_not(mask_latent)] = 0
+        mask_latent[np.sum(np.logical_or(nocs_latent > 1, nocs_latent < 0), axis=-1) != 0] = False
 
-        nocs_mask = np.ones_like(nocs)
-        bg_pixels = np.all(nocs == [0, 0, 0], axis=-1)
+        nocs_mask = np.ones_like(nocs_latent)
+        bg_pixels = np.all(nocs_latent == [0, 0, 0], axis=-1)
         nocs_mask[bg_pixels] = [0, 0, 0]
         
         c = np.array([c_w_, c_h_])
@@ -262,19 +200,20 @@ class multiscene_2(BaseDataset):
             'input_scene': (scene_padded_resized.transpose((2, 0, 1)) / 255).astype(np.float32), # (3, 490, 490)
             'bbox_size': s,
             'bbox_center': c,
-            'gt_bbox_2d': np.array(bbox_resized).astype(np.float32), # (4,)
+            'bbox_size_resized': s_resized,
+            'bbox_center_resized': c_resized,
             'roi_coord_2d': roi_coord_2d.astype(np.float32), # (2, 32, 32)
             'gt_r': cam_R_m2c.astype(np.float32),
             'gt_t': cam_t_m2c.reshape(-1).astype(np.float32),
             'cam_K': cam_K.astype(np.float32),
             'cam_K_resized': cam_K_resized.astype(np.float32),
-            'resize_ratio': np.array([ratio_scalar], dtype=np.float32),
+            'resize_ratio': np.array([self.scale_size / s], dtype=np.float32),
             'gt_trans_ratio': trans_ratio.reshape(-1).astype(np.float32),
-            'mask': mask, # (32, 32)
-            'nocs': nocs.transpose((2, 0, 1)).astype(np.float32), # (3, 32, 32)
+            'mask': mask, # (490, 490)
+            'mask_latent': mask_latent, # (32, 32)
+            'nocs': nocs.transpose((2, 0, 1)).astype(np.float32), # (3, 490, 490)
+            'nocs_latent': nocs_latent.transpose((2, 0, 1)).astype(np.float32),
             'nocs_mask': nocs_mask[:, :, 0], # (32, 32)
-            'nocs_vis': nocs_vis.transpose((2, 0, 1)).astype(np.float32), # (3, 256, 256)
-            'mask_vis': mask_vis, # (256, 256)
             'kps_3d_m': keypoints_3d.astype(np.float32), # (9, 3)
             'class_name': category_name,
             # '3d_feat': feat_3d.astype(np.float32) # (1024, 387)
@@ -286,9 +225,9 @@ class multiscene_2(BaseDataset):
     def get_kpt_2d(self, kpt_3d, R_m2c, t_m2c, K):
         kpt_2d = (kpt_3d @ R_m2c.T + t_m2c) @ K.T
         return kpt_2d
-    
+
     @staticmethod
-    def get_kpt_3d(object_annotation, dt=5):
+    def get_kpt_3d(object_annotation):
         size = object_annotation["size"]
 
         # Define 3D bounding box in object space
@@ -369,12 +308,10 @@ class multiscene_2(BaseDataset):
         return center, wh
 
     @staticmethod
-    def xywh2cs(xywh, base_ratio=1.0, wh_max=480):
+    def xywh2cs(xywh, base_ratio=1.0):
         x, y, w, h = xywh
         center = np.array((x+0.5*w, y+0.5*h)) # [c_w, c_h]
         wh = max(w, h) * base_ratio
-        # if wh_max != None:
-        #     wh = min(wh, wh_max)
         return center, wh
     
     @staticmethod

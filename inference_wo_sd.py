@@ -15,7 +15,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.strategies import DDPStrategy
 
 from custom_trainer import CustomTrainer
-from utils.utils import get_2d_coord_np, crop_resize_by_warp_affine, draw_3d_bbox_with_coordinate_frame, box3d_overlap
+from utils.utils import get_2d_coord_np, crop_resize_by_warp_affine, draw_3d_bbox_with_coordinate_frame, draw_3d_bbox_on_image_array, box3d_overlap
 from utils.pose_postprocessing import pose_from_pred_centroid_z
 
 from dataset.base_dataset import get_dataset
@@ -105,6 +105,8 @@ def main():
         else:
             annotations[annotation['image_id']].append(annotation)
 
+    n = 0
+
     predictions = []
     for img_id, value in tqdm(img_info.items(), desc="Processing images"):
         img_path = os.path.join(images_folder, value['file_path'])
@@ -160,8 +162,8 @@ def main():
             img_roi, c_h_, c_w_, s_, roi_coord_2d = zoom_in(image, c, s, res=args.scale_size, return_roi_coord=True)
             mask_roi, *_ = zoom_in(mask, c, s, res=args.scale_size, interpolate=cv2.INTER_NEAREST)
 
-            # Image.fromarray(img_roi.astype(np.uint8)).save("test_pose/image_roi.png")
-            # Image.fromarray((mask_roi*255.).astype(np.uint8)).save("test_pose/mask_roi.png")
+            # Image.fromarray(img_roi.astype(np.uint8)).save(f"test_pose/image_roi_{n}.png")
+            # Image.fromarray((mask_roi*255.).astype(np.uint8)).save(f"test_pose/mask_roi_{n}.png")
 
             c = np.array([c_w_, c_h_])
             s = s_
@@ -198,10 +200,14 @@ def main():
                 # kps_3d[:, [1, 2, 3, 4], 0], kps_3d[:, [5, 6, 7, 8], 0] = -l/2, l/2
                 # kps_3d[:, [1, 2, 5, 6], 1], kps_3d[:, [3, 4, 7, 8], 1] = -w/2, w/2
                 # kps_3d[:, [1, 3, 5, 7], 2], kps_3d[:, [2, 4, 6, 8], 2] = -h/2, h/2
-                # img_with_pose = draw_3d_bbox_with_coordinate_frame(image_raw, kps_3d[0], m2c_R, center_cam, cam_K)
-                # # Image.fromarray(img_with_pose).save(f"test_pose/{value['file_path'].split('/')[-1].replace('.jpg', '')}_anno{annotations[img_id].index(annotation)}.png")
-                # Image.fromarray(img_with_pose).save(f"test_pose/gt_pose.png")
-                # a
+                # img_with_pose = draw_3d_bbox_on_image_array(image_raw, bbox_cam_on_img[1:])
+                # img_with_pose_pred = draw_3d_bbox_with_coordinate_frame(image_raw, kps_3d[0], pred_ego_rot[0].cpu().numpy(), pred_trans[0].cpu().numpy(), cam_K)
+                # Image.fromarray(img_with_pose).save(f"test_pose/gt_pose_{n}.png")
+                # Image.fromarray(img_with_pose_pred).save(f"test_pose/pred_pose_{n}.png")
+                # print("save pose images")
+
+                n += 1
+                
 
                 prediction["instances"].append(
                     {

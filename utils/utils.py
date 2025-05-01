@@ -293,6 +293,24 @@ def draw_3d_bbox_with_coordinate_frame(image, keypoints, m2c_R, m2c_t, camera_ma
     return image_with_bbox
 
 
+def draw_3d_bbox_on_image_array(image_array, points):
+    image = image_array.copy()
+    edges = [
+        (0, 1), (1, 2), (2, 3), (3, 0),  # front face
+        (4, 5), (5, 6), (6, 7), (7, 4),  # back face
+        (0, 4), (1, 5), (2, 6), (3, 7)   # sides
+    ]
+    for start, end in edges:
+        pt1 = tuple(points[start].astype(int))
+        pt2 = tuple(points[end].astype(int))
+        cv2.line(image, pt1, pt2, color=(0, 255, 0), thickness=2)
+
+    for (x, y) in points:
+        cv2.circle(image, (int(x), int(y)), radius=5, color=(0, 0, 255), thickness=-1)
+    
+    return image
+
+
 def draw_bbox_on_image_array(image_array, bbox, output_path=None):
     """
     Draw a bounding box on an image array and save it as a PNG file.
