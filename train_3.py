@@ -174,7 +174,7 @@ def main():
     args = opt.initialize().parse_args()
     print(args)
 
-        # Dataset setting
+    # Dataset setting
     dataset_kwargs = {
         'dataset_name': args.dataset, 
         'data_path': args.data_path, 

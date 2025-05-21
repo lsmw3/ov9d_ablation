@@ -293,20 +293,93 @@ def draw_3d_bbox_with_coordinate_frame(image, keypoints, m2c_R, m2c_t, camera_ma
     return image_with_bbox
 
 
-def draw_3d_bbox_on_image_array(image_array, points):
+def draw_3d_bbox_on_image_array(image_array, points, K=None):
+    """
+    Draw a 3D bounding box with center point and coordinate axes on an image.
+    
+    Args:
+        image_array: The input image as a numpy array
+        points: Array of shape (9, 3) where the first point is the center and the rest are corners
+                OR already projected points with shape (9, 2)
+        K: Camera intrinsic matrix (3x3). If None, points are assumed to be already projected
+    
+    Returns:
+        Image with the 3D bounding box, center point, and coordinate axes drawn
+    """
     image = image_array.copy()
+    
+    # Check if we need to project the points
+    if K is not None:
+        pts_cam = points.T  # shape (3, N)
+        pts_img_homog = K @ pts_cam  # shape (3, N)
+        pts_2d = (pts_img_homog[:2, :] / pts_img_homog[2:3, :]).T  # shape (N, 2)
+    else:
+        pts_2d = points
+    
+    # Extract center point and corners
+    center_2d = pts_2d[0]
+    corners_2d = pts_2d[1:9]
+    
+    # Define the bounding box edges (pairs of corner indices)
+    # Adjust indices for the original function (0-indexed) to match our data (1-indexed due to center)
     edges = [
-        (0, 1), (1, 2), (2, 3), (3, 0),  # front face
-        (4, 5), (5, 6), (6, 7), (7, 4),  # back face
-        (0, 4), (1, 5), (2, 6), (3, 7)   # sides
+        (0, 1), (1, 2), (2, 3), (3, 0),  # bottom face
+        (4, 5), (5, 6), (6, 7), (7, 4),  # top face
+        (0, 4), (1, 5), (2, 6), (3, 7)   # connecting edges
     ]
+    
+    # Draw the bounding box edges
     for start, end in edges:
-        pt1 = tuple(points[start].astype(int))
-        pt2 = tuple(points[end].astype(int))
-        cv2.line(image, pt1, pt2, color=(0, 255, 0), thickness=2)
-
-    for (x, y) in points:
-        cv2.circle(image, (int(x), int(y)), radius=5, color=(0, 0, 255), thickness=-1)
+        # Add 1 to indices because corners start at index 1 in pts_2d
+        pt1 = tuple(corners_2d[start].astype(int))
+        pt2 = tuple(corners_2d[end].astype(int))
+        cv2.line(image, pt1, pt2, color=(255, 0, 255), thickness=2)  # Magenta for bbox
+    
+    # Draw corner points
+    for point in corners_2d:
+        cv2.circle(image, tuple(point.astype(int)), radius=3, color=(0, 255, 255), thickness=-1)  # Cyan corners
+    
+    # If we have the 3D camera-frame coordinates, compute and draw coordinate axes
+    if K is not None:
+        # Extract the center and first three corners in 3D camera coordinates
+        center_3d = points[0]
+        corners_3d = points[1:9]
+        
+        # Calculate the size of the bounding box for scaling the axes
+        bbox_size = np.max(np.linalg.norm(corners_3d - center_3d, axis=1))
+        axis_length = bbox_size * 0.7  # Scale axis length to 70% of the maximum distance
+        
+        # Define coordinate axes in camera frame (relative to center)
+        axes_3d = np.array([
+            [axis_length, 0, 0],  # X-axis (red)
+            [0, axis_length, 0],  # Y-axis (green)
+            [0, 0, axis_length]   # Z-axis (blue)
+        ])
+        
+        # Add center to get the end points of axes in camera frame
+        axes_end_3d = center_3d + axes_3d
+        
+        # Project axes end points to image
+        axes_end_homog = K @ axes_end_3d.T
+        axes_end_2d = (axes_end_homog[:2, :] / axes_end_homog[2:3, :]).T
+        
+        # Draw coordinate axes
+        colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0)]  # RGB colors for X (red), Y (green), Z (blue)
+        
+        for i, (end_point, color) in enumerate(zip(axes_end_2d, colors)):
+            start_point = tuple(center_2d.astype(int))
+            end_point = tuple(end_point.astype(int))
+            cv2.line(image, start_point, end_point, color, 3)
+            
+            # Add text labels for axes
+            text_pos = (int((start_point[0] + end_point[0]) * 0.6), 
+                       int((start_point[1] + end_point[1]) * 0.6))
+            axis_label = ['X', 'Y', 'Z'][i]
+            cv2.putText(image, axis_label, text_pos, 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+    
+    # Draw center point last so it's on top
+    cv2.circle(image, tuple(center_2d.astype(int)), radius=5, color=(0, 165, 255), thickness=-1)  # Orange center
     
     return image
 

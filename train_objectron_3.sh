@@ -2,4 +2,4 @@ python   train_3.py --batch_size 16 --dataset objectron_3 --data_path /workspace
          --num_filters 32 32 32 32 --deconv_kernels 2 2 2 \
          --lr 1e-3 --min_lr 1e-4 --log_dir logs --embed_dim 256 \
          --epochs 1000 --auto_resume --dino --dino_type small --attn_depth 12 --rot_dim 6 --num_gpus 2 --decode_rt \
-         # --ckpt_path logs/objectron/epoch=4.ckpt
+         --ckpt_path logs/objectron_3-decode_rt/epoch=39.ckpt

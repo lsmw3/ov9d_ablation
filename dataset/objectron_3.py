@@ -174,6 +174,8 @@ class objectron_3(BaseDataset):
         
         rgb, c_h_, c_w_, s_, roi_coord_2d = self.zoom_in_v2(image, c, s, res=self.scale_size, return_roi_coord=True) # (490, 490, c)
         
+        mask_raw = mask.copy()
+        
         mask, *_ = self.zoom_in_v2(mask, c, s, res=self.scale_size, interpolate=cv2.INTER_NEAREST) # (490, 490)
         mask_latent, *_ = self.zoom_in_v2(mask_resized, c_resized, s_resized, res=self.latent_size, interpolate=cv2.INTER_NEAREST) # (32, 32)
         mask = (mask == frame_info["object_id"])
@@ -202,6 +204,7 @@ class objectron_3(BaseDataset):
             'bbox_center': c,
             'bbox_size_resized': s_resized,
             'bbox_center_resized': c_resized,
+            'gt_bbox_2d': np.array(bbox).astype(np.float32), # (4,)
             'roi_coord_2d': roi_coord_2d.astype(np.float32), # (2, 32, 32)
             'gt_r': cam_R_m2c.astype(np.float32),
             'gt_t': cam_t_m2c.reshape(-1).astype(np.float32),
@@ -209,6 +212,7 @@ class objectron_3(BaseDataset):
             'cam_K_resized': cam_K_resized.astype(np.float32),
             'resize_ratio': np.array([self.scale_size / s], dtype=np.float32),
             'gt_trans_ratio': trans_ratio.reshape(-1).astype(np.float32),
+            'mask_raw': mask_raw.astype(np.float32),
             'mask': mask, # (490, 490)
             'mask_latent': mask_latent, # (32, 32)
             'nocs': nocs.transpose((2, 0, 1)).astype(np.float32), # (3, 490, 490)
