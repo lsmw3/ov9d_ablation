@@ -428,11 +428,10 @@ def main():
         'data_name': args.data_name, 
         'data_type': args.data_val,
         'feat_3d_path': args.data_3d_feat ,
-        'xyz_bin': args.nocs_bin,
-        'scale_size': args.scale_size
     }
     dataset_kwargs['scale_size'] = args.scale_size
-    dataset_kwargs['data_type'] = args.data_val
+    dataset_kwargs['latent_size'] = args.latent_size
+    dataset_kwargs['virtual_focal'] = args.virtual_focal
 
     inference_dataset = get_dataset(**dataset_kwargs, is_train=False)
     sampler_infer = RandomSampler(inference_dataset)
@@ -496,17 +495,17 @@ def main():
             pred_pts = output_dict["pred_pts_3d"]
             gt_pts = transform_pts_batch(gt_kps_3d[:, 1:, :], gt_r, gt_t)
             
-            for i in range(len(batch['img_name'])):
+            for i in range(bs):
                 img_name = batch['img_name'][i]
                 category_name = batch['class_name'][i]
                 if img_name in img_to_id and category_name in category_to_id:
                     img_id = img_to_id[img_name]
                     category_id = category_to_id[category_name]
-                    for pred_dict, pred_pts_3d in [(predictions, pred_pts), (predictions_gts_predrt, pred_pts_gt_size), (predictions_gtrt_preds, pred_pts_gt_rt) (predictions_gt, gt_pts)]:
+                    for pred_dict, pred_pts_3d in [(predictions, pred_pts), (predictions_gts_predrt, pred_pts_gt_size), (predictions_gtrt_preds, pred_pts_gt_rt), (predictions_gt, gt_pts)]:
                         if str(img_id) not in pred_dict:
                             pred_dict[str(img_id)] = {
                                 "image_id": img_id,
-                                "K": batch["cam"][i].cpu().numpy().tolist(),
+                                "K": batch["cam_K"][i].cpu().numpy().tolist(),
                                 "width": int(batch["raw_scene"][i].shape[2]),
                                 "height": int(batch["raw_scene"][i].shape[1]),
                                 "instances": []
@@ -561,11 +560,11 @@ def main():
                 else:
                     continue
 
-    for pred_dict, pred_list in [(predictions, predictions_list), (predictions_gts_predrt, predictions_gts_predrt_list), (predictions_gtrt_preds, predictions_gtrt_preds_list) (predictions_gt, predictions_gt_list)]:
+    for pred_dict, pred_list in [(predictions, predictions_list), (predictions_gts_predrt, predictions_gts_predrt_list), (predictions_gtrt_preds, predictions_gtrt_preds_list), (predictions_gt, predictions_gt_list)]:
         for key, value in pred_dict.items():
             pred_list.append(value)
 
-    torch.save(predictions_list, "logs/inference_ablation/instances_predictions_rt_objectron.pth")
+    torch.save(predictions_list, "logs/inference_ablation/instances_predictions_rt_objectron_pred.pth")
     torch.save(predictions_gts_predrt_list, "logs/inference_ablation/instances_predictions_rt_objectron_gts_predrt.pth")
     torch.save(predictions_gtrt_preds_list, "logs/inference_ablation/instances_predictions_rt_objectron_gtrt_preds.pth")
     torch.save(predictions_gt_list, "logs/inference_ablation/instances_predictions_rt_objectron_gt.pth")
