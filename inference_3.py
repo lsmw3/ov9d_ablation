@@ -562,10 +562,13 @@ def main():
                     continue
 
     for pred_dict, pred_list in [(predictions, predictions_list), (predictions_gts_predrt, predictions_gts_predrt_list), (predictions_gtrt_preds, predictions_gtrt_preds_list) (predictions_gt, predictions_gt_list)]:
-        for key, value in predictions.items():
+        for key, value in pred_dict.items():
             pred_list.append(value)
 
-    torch.save(predictions_list, "logs/inference_pth/instances_predictions_rt_objectron.pth")
+    torch.save(predictions_list, "logs/inference_ablation/instances_predictions_rt_objectron.pth")
+    torch.save(predictions_gts_predrt_list, "logs/inference_ablation/instances_predictions_rt_objectron_gts_predrt.pth")
+    torch.save(predictions_gtrt_preds_list, "logs/inference_ablation/instances_predictions_rt_objectron_gtrt_preds.pth")
+    torch.save(predictions_gt_list, "logs/inference_ablation/instances_predictions_rt_objectron_gt.pth")
 
 
 if __name__ == '__main__':
